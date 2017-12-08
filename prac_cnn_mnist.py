@@ -39,6 +39,7 @@ def cnn_model_fn(features, labels, mode):						# mode = PRED, EVAL, TRAIN
 				strides=2)
 
 	pool2_flat = tf.reshape(pool2, [-1, 7*7*64])				# 2D image is now flattened for the dense layer
+	
 	dense_layer = tf.layers.dense(
 				inputs=pool2_flat,
 				units=1024,

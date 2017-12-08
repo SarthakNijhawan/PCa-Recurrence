@@ -176,10 +176,10 @@ def generate_bit_mask(shape, xml_file):
 			vw[index][1] = float(vertex.getAttribute('Y'))
 		x_series = vw[:,0]
 		y_series = vw[:,1]
-		# print x_series
+		# print(x_series
 		avg_x=np.mean(x_series)
 		avg_y=np.mean(y_series)
-		# print avg_x, avg_y
+		# print(avg_x, avg_y
 		new_coord_x=x_series-avg_x
 		new_coord_y=y_series-avg_y
 		new_coord_x=.5*new_coord_x
@@ -187,8 +187,8 @@ def generate_bit_mask(shape, xml_file):
 		new_coord_x=new_coord_x+avg_x
 		new_coord_y=new_coord_y+avg_y
 
-		# print x_series-new_coord_x
-		# print y_series - new_coord_y
+		# print(x_series-new_coord_x
+		# print(y_series - new_coord_y
 		vw[:,0]=new_coord_x
 		vw[:,1]=new_coord_y		
 
@@ -208,7 +208,7 @@ def generate_bit_mask(shape, xml_file):
 	for contour in xy:
 		cv2.drawContours(mask, [contour], -1, (255,255,255), cv2.FILLED)
 		cv2.drawContours(mask_boundary, [contour], -1, (255,255,255), 3)
-	print np.unique(mask)
+	print(np.unique(mask))
 	return mask, mask_boundary
 
 def data_mirror(image_list, width, height):
@@ -232,7 +232,8 @@ def create_patch(path_anot, path_img, save_path_anot, save_path_img, save_path_w
 	"""
 	j = 0
 	for p_a, p_i, img_n in zip(path_anot, path_img, img_name):
-		print j
+		print(j)
+		print(p_i)
 		j += 1
 		img = cv2.imread(p_i)
 		img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -287,7 +288,7 @@ def create_patch(path_anot, path_img, save_path_anot, save_path_img, save_path_w
 					i += 1
 
 def make_directory_structure(dir_img, dir_xml, save_path_anot, save_path_img, save_path_weight, is_img_aug=False):
-	print dir_img, dir_xml, save_path_anot, save_path_img, save_path_weight
+	print(dir_img, dir_xml, save_path_anot, save_path_img, save_path_weight)
 	if os.path.exists(save_path_anot):
 		shutil.rmtree(save_path_anot)
 	os.makedirs(save_path_anot)
@@ -314,23 +315,23 @@ def make_directory_structure(dir_img, dir_xml, save_path_anot, save_path_img, sa
 		path_img.append(dir_img  + "/" + img_name + ".tif")
 		img_name_list.append(img_name)
 
-	create_patch(path_anot, path_img, save_path_anot, save_path_img, save_path_weight, patch_size, img_name_list, stride, is_img_aug=is_img_aug)
+	create_patch(path_anot[1:], path_img[1:], save_path_anot, save_path_img, save_path_weight, patch_size, img_name_list[1:], stride, is_img_aug=is_img_aug)
 
 if __name__ == '__main__':
-
-	save_path_anot = "./%s/%s_y/" 
-	save_path_img = "./%s/%s_x/" 
-	save_path_weight = "./%s/weights" 
-	dir_img = "./%s/Tissue_images" 
-	dir_xml = "./%s/Annotations"
+	cur_dir = os.getcwd()
+	save_path_anot = os.path.join(cur_dir, "%s/%s_y/")
+	save_path_img = os.path.join(cur_dir, "%s/%s_x/")
+	save_path_weight = os.path.join(cur_dir, "%s/weights")
+	dir_img = os.path.join(cur_dir, "%s/Tissue_images") 
+	dir_xml = os.path.join(cur_dir, "%s/Annotations")
 	# Reading the whole slide image using opencv
 
 	make_directory_structure(dir_img % "Training", dir_xml % "Training", save_path_anot % ("Training", "Train_20"),\
 	 save_path_img % ("Training", "Train_20"), save_path_weight % "Training")
 
-	make_directory_structure(dir_img % "Testing", dir_xml % "Testing", save_path_anot % ("Testing", "Test_20"),\
-	 save_path_img % ("Testing", "Test_20"), save_path_weight % "Testing", False)
+	# make_directory_structure(dir_img % "Testing", dir_xml % "Testing", save_path_anot % ("Testing", "Test_20"),\
+	#  save_path_img % ("Testing", "Test_20"), save_path_weight % "Testing", False)
 
-	make_directory_structure(dir_img % "Validation", dir_xml % "Validation", save_path_anot % ("Validation", "Valid_20"),\
-	 save_path_img % ("Validation", "Valid_20"), save_path_weight % "Validation", False)
+	# make_directory_structure(dir_img % "Validation", dir_xml % "Validation", save_path_anot % ("Validation", "Valid_20"),\
+	#  save_path_img % ("Validation", "Valid_20"), save_path_weight % "Validation", False)
 
