@@ -2,7 +2,13 @@ import argparse														#TODO
 import numpy as np
 import os
 import pickle
+import scipy.stats as st
 import tensorflow as tf
+
+from keras.layers import Dense, Dropout, Conv2D, MaxPooling2D, Activation
+from keras.metrics import categorical_accuracy as accuracy
+from keras.objectives import categorical_crossentropy
+from keras import backend as K
 
 """
 	Description:
@@ -18,11 +24,89 @@ percentile_1 = 0.4													# FIXME
 percentile_2 = 0.3													# FIXME
 n_iter = 1000														# number of iterations for EM algo to run
 
+
+# Default Session for Keras
+sess = tf.Session()
+K.set_session(sess)
+
+# -------------------- Helper functions ------------------------
 def load_image(img_path):
 	img = cv2.imread(img_path)
 	img_tensor = tf.convert_to_tensor(img)
 	return tf.reshape(img_tensor, [1,101,101,3])					# Reshaping so that it can be processed further into batches on axis=0
 
+# local response normalization on images (Adapted Code)
+# def lrn(x):
+# 	""" Custom made normalisation layer for Keras """
+#     ones_for_weight = np.reshape(np.ones((32, 32)), (1,32,32))
+#     mu = sum_pool2d(x, pool_size = (7, 7), strides = (1, 1), padding = (3, 3))
+#     mu_weight = sum_pool2d(ones_for_weight, pool_size = (7, 7), strides = (1, 1), padding = (3, 3))
+#     sum_sq_x = sum_pool2d(K.square(x), pool_size = (7, 7), strides = (1, 1), padding = (3, 3))
+#     total_mu_sq = mu_weight * K.square(mu)
+#     sq_cross_term = -2 * K.square(mu)
+#     sigma = K.sqrt(sum_sq_x + total_mu_sq + sq_cross_term)
+#     return (x - mu)/(sigma + 1)
+
+# # def lcn_output_shape(input_shape):
+# #     return input_shape
+
+
+# def sum_pool2d(x, pool_size = (7, 7), strides = (1, 1), padding = (3, 3)):
+#     sum_x = pool.pool_2d(x, ds = pool_size, st = strides, mode = 'sum', padding = padding, ignore_border = True)
+#     return sum_x
+
+# # def sum_pool2d_output_shape(input_shape):
+# #     return input_shape
+
+def gkern(kernlen=101, nsig=3):
+    """Returns a 2D Gaussian kernel array."""
+
+    interval = (2*nsig+1.)/(kernlen)
+    x = np.linspace(-nsig-interval/2., nsig+interval/2., kernlen+1)
+    kern1d = np.diff(st.norm.cdf(x))
+    kernel_raw = np.sqrt(np.outer(kern1d, kern1d))
+    kernel = kernel_raw/kernel_raw.sum()
+    return kernel
+
+def cnn_model():
+	""" Model function for the CNN Model """
+	# Placeholders
+	img = tf.placeholder(tf.float32, shape=(None, 101, 101, 3))
+	labels = tf.placeholder(tf.float32, shape=(None, 2))
+
+	# Layers
+	conv1 = conv2D(80, 6, strides=1, padding='same', activation=None, kernel_initialiser='he_normal')(img)
+	conv1 = tf.nn.local_response_normalisation(conv1)										# FIXME
+	conv1 = Activation('relu')(conv1)
+	conv1 = MaxPooling2D(pool_size=(2, 2), strides=2)(conv1)
+
+	conv2 = conv2D(120, 5, strides=1, padding='same', activation=None, kernel_initialiser='he_normal')(conv1)
+	conv2 = tf.nn.local_response_normalisation(conv2)										# FIXME
+	conv2 = Activation('relu')(conv2)
+	conv2 = MaxPooling2D(pool_size=(2, 2), strides=2)(conv2)
+
+	conv3 = conv2D(160, 3, strides=1, padding='same', activation=None, kernel_initialiser='he_normal')(conv2)
+	
+	conv4 = conv2D(200, 3, strides=1, padding='same', activation=None, kernel_initialiser='he_normal')(conv3)
+	conv4 = MaxPooling2D(pool_size=(3, 3), strides=2)(conv4)
+
+	dense1 = Dense(320, activation='relu')(conv4)
+	dense1 = Dropout(dropout_prob)(dense1)
+
+	dense2 = Dense(320, activation='relu')(dense1)
+	dense2 = Dropout(dropout_prob)(dense2)
+
+	output_softmax = Dense(320, activation='relu')(dense2)
+
+	# loss funtion
+	loss = tf.reduce_mean(categorical_crossentropy(labels, preds))
+
+	# Training operation
+	train_step = tf.train.GradientDescentOptimizer(0.5).minimize(loss)
+	
+	return [output_softmax, loss, train_step]
+
+# -------------------- Functions for EM Algo -------------------
 def load_imagewise_patches():
 	""" - Loads all the images and splits them into patches for prediction
 		and updation of training data for every iteration in the applied
@@ -73,7 +157,7 @@ def prepare_train_data_from_img_wise_dict():
 		and treating all the patches as discrminiative initially
 		- Returns:
 
-		"""
+	"""
 
 	pass
 
@@ -84,6 +168,29 @@ def M_step():
 		- Returns:
 
 		"""
+	[output, loss, train_step] = cnn_model()
+
+	# Initialize all variables
+	init_op = tf.global_variables_initializer()
+	sess.run(init_op)
+	
+	# Run training loop
+	with sess.as_default():
+	    for i in range(100):
+	        batch = mnist_data.train.next_batch(50)
+	        train_step.run(feed_dict={img: batch[0],
+	                                  labels: batch[1],
+	                                  K.learning_phase(): 1})
+	# Accuracy metric
+	acc_value = accuracy(labels, preds)
+	with sess.as_default():
+	    print acc_value.eval(feed_dict={img: mnist_data.test.images,
+	                                    labels: mnist_data.test.labels,
+	                                    K.learning_phase(): 0})
+
+	# Prediction for a given batch of images
+	predictions = preds.eval(feed_dict={img: img_pred,
+										K.learning_phase(): 0})
 
 	pass
 
@@ -97,13 +204,33 @@ def load_and_predict():
 
 	pass
 
-def E_step():
+def E_step(predicted_maps):
 	""" - Applies gaussian smoothing to the predicted probability maps
 		- Generates bit mask for acceptable()discriminative patches for the next M_step
 		- Returns:
 				Refined training data for the next step
 	"""
-	
+
+	for labeled_dict in predicted_maps:
+		for img_name in labeled_dict.keys:
+			reconstructed_probab_map = np.zeros([101,101])
+			
+			for patch_tuple in labeled_dict[img_name]:
+				center_coord = patch_tuple[:2]
+				probability = patch_tuple[2]
+				orig_patch_probab = reconstructed_probab_map[center_coord[0]-50: center_coord[0]+50, center_coord[1]-50:center_coord[1]+50]
+				new_patch_prob = probability*np.gkern()
+				reconstructed_probab_map[center_coord[0]-50: center_coord[0]+50, center_coord[1]-50:center_coord[1]+50] = 
+						np.maximum(orig_patch, new_patch_prob)
+
+			
+			threshold = 
+
+
+
+
+
+
 	pass
 
 
@@ -118,7 +245,7 @@ def main():
 		M_step(training_data, n_epochs, batch_size, ):
 
 		# Predicts the probab maps and then performs the e-step
-		predicted_probability_maps = load_model_and_predict(imagewise_patches)
+		predicted_probability_maps = load_and_predict(imagewise_patches)
 
 		training_data = E_step(predicted_probability_maps)
 
