@@ -1,7 +1,5 @@
-import argparse																						#TODO
 import numpy as np
 import os
-import pickle
 import scipy.stats as st
 import tensorflow as tf
 
@@ -10,11 +8,6 @@ from keras.metrics import categorical_accuracy as accuracy
 from keras.objectives import categorical_crossentropy
 from keras import backend as K
 
-"""
-	Description:
-
-"""
-
 # --------------------- Global Variables -------------------------
 model_path = './models/patch_based_cnn_model'
 patches_path = '../deepak/DB_HnE_101_anno_cent'
@@ -22,35 +15,60 @@ images_path = '../deepak/sorted_patient_wise_normalized_dataset'
 
 n_iter = 1000														# number of iterations for EM algo to run
 
+# @todo : Evaluation in every iteration
+# @todo : 
 
 # --------------------- Main Function ----------------------------
 def main():
 	""" Trains the model on EM algo and saves it to the given model path """
+	# Default Session for Keras
+	sess = tf.Session()
+	K.set_session(sess)
+
+	saver = tf.train.Saver()
 
 	# Loads all the patches label wise dictionaries of image wise patches 
-	patches, initial_train_data = load_patches_image_wise(patches_path, images_path)				# TODO
+	patches, initial_train_data = load_patches_image_wise(patches_path, images_path)						# TODO
 
-	# Initial M-step
-	_, _, _, train_step = patch_based_cnn_model()
-	train(initial_train_data[0], initial_train_data[1], load=False)
+	# Initial M-step: Training and predictions of probability maps
+	preds, pred_class, loss, train_step = patch_based_cnn_model()
+	for epoch in xrange(1, n_epochs):
+		epoch_loss = 0
+		for i in range(train_x.shape[0]/batch_size):
+			sess.run(train_step, feed_dict={img: train_x[,:,:,:],											# TODO
+											labels: train_y[,:],											# TODO
+											K.learning_phase(): 1})
+		print("Epoch :", epoch, "loss is :", epoch_loss)
 
+	# 2nd Iteration onwards
 	for itr in range(n_iter-1):
 		# E-step
 		predicted_maps = []
 		for i in range(2):
-			per_label_maps = {}
+			predicted_maps[i] = {}
 			for image in patches[i].keys:
-				per_label_maps{image} = load_and_predict(patches{image})							# patches{image}.shape = [None, 101, 101, 3]
-			predicted_maps[i] = per_label_maps
-		train_data = E_step(predicted_maps)															# TODO
+				predicted_maps[i]{image} = sess.run(preds, feed_dict={	img: patches[i]{image},
+																   		K.learning_phase(): 0})
+		train_data = E_step(predicted_maps)																	# TODO
 
 		# M-Step
-		train(train_data[0], train_data[1], model_path)
-		# load_and_evaluate(test_data[0], test_data[1], model_path)									# TODO
-	
+		for epoch in xrange(1, n_epochs):
+			epoch_loss = 0
+			for i in range(train_x.shape[0]/batch_size):
+				sess.run(train_step, feed_dict={img: train_x[,:,:,:],										# TODO
+												labels: train_y[,:],										# TODO
+												K.learning_phase(): 1})
+			print("Epoch :", epoch, "loss is :", epoch_loss)
+
+	# saving the model
+	saver.save(sess, model_path)
+
+	# EM-Algo completed
+	sess.close()
 	print("Completed!!")
 
-		
+
+
 ##################################################################
 #---------------------Model and its functions -------------------#
 ##################################################################
@@ -62,12 +80,12 @@ def patch_based_cnn_model(dropout_prob=0.5, l_rate=0.5, n_classes=2):
 
 	# Layers
 	conv1 = Conv2D(80, 6, strides=1, padding='same', activation=None, kernel_initializer='he_normal')(img)
-	conv1 = tf.nn.local_response_normalisation(conv1)										# FIXME
+	conv1 = tf.nn.local_response_normalisation(conv1)														# FIXME
 	conv1 = Activation('relu')(conv1)
 	conv1 = MaxPooling2D(pool_size=(2, 2), strides=2)(conv1)
 
 	conv2 = Conv2D(120, 5, strides=1, padding='same', activation=None, kernel_initializer='he_normal')(conv1)
-	conv2 = tf.nn.local_response_normalisation(conv2)										# FIXME
+	conv2 = tf.nn.local_response_normalisation(conv2)														# FIXME
 	conv2 = Activation('relu')(conv2)
 	conv2 = MaxPooling2D(pool_size=(2, 2), strides=2)(conv2)
 
@@ -97,58 +115,6 @@ def patch_based_cnn_model(dropout_prob=0.5, l_rate=0.5, n_classes=2):
 
 	return [preds, pred_class, loss, train_step]
 
-def train(train_x, train_y, model_path, n_epochs=2, batch_size=128, load=True):
-	""" Loads the model from the given path, trains it for n_epochs 
-		and then saves the model back to the same 
-	"""
-
-	# Default Session for Keras
-	sess = tf.Session()
-	K.set_session(sess)
-
-	saver = tf.train.Saver()
-	if load:
-		saver.load(sess, model_path)
-
-	for epoch in xrange(1, n_epochs):
-		epoch_loss = 0
-		for i in range(train_x.shape[0]/batch_size):
-			sess.run(train_step, feed_dict={img: train_x[,:,:,:],										#TODO
-											labels: train_y[,:],										#TODO
-											K.learning_phase(): 1})
-		print("Epoch :", epoch, "loss is :", epoch_loss)
-
-	saver.save(sess, model_path)
-	sess.close()
-
-def load_and_predict(pred_x, model_path):
-	# Default Session for Keras
-	sess = tf.Session()
-	K.set_session(sess)
-
-	saver = tf.train.Saver()
-	saver.load(sess, model_path)
-
-	predictions = sess.run(preds, feed_dict={img: pred_x,
-											K.learning_phase(): 0})
-	sess.close()
-	return predictions
-
-def load_and_evaluate(test_x, text_y, model_path):
-	# Default Session for Keras
-	sess = tf.Session()
-	K.set_session(sess)
-	
-	saver = tf.train.Saver()
-	saver.load(sess, model_path)
-
-	# Accuracy metric
-	with sess.as_default():
-	    accuracy = acc_value.eval(feed_dict={img: test_x,
-			                          		labels: text_y,
-			                           		K.learning_phase(): 0})
-	sess.close()
-	return accuracy
 
 
 ##################################################################
@@ -164,6 +130,7 @@ def load_patches_image_wise(cent_patches_dir, normalised_dataset_dir):
 	"""
 
 	img_wise_patches = []
+	train_data = []
 
 	for i in range(2):												# iterated over label 1 and 0
 		labeled_img_wise_patches = {}
@@ -195,7 +162,8 @@ def load_patches_image_wise(cent_patches_dir, normalised_dataset_dir):
 
 		img_wise_patches += [labeled_img_wise_patches,] 
 
-	return img_wise_patches
+	return [img_wise_patches, init_train_data]
+
 
 def E_step(predicted_maps):
 	""" - Applies gaussian smoothing to the predicted probability maps
@@ -218,7 +186,7 @@ def E_step(predicted_maps):
 			
 			# threshold = 
 
-	pass
+	return new_train_data
 
 
 #################################################################
@@ -264,3 +232,4 @@ def gkern(kernlen=101, nsig=3):
 
 if __name__ == '__main__':
 	main()
+
