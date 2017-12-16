@@ -1,12 +1,15 @@
 import tensorflow as tf
 import numpy as np
-from keras.layers import Dense, Dropout, Activation, Conv2D, MaxPooling2D
+from keras.layers import Dense, Dropout, Activation
 from keras.metrics import categorical_accuracy as accuracy
 from keras.objectives import categorical_crossentropy
 from keras import backend as K
 
 from tensorflow.examples.tutorials.mnist import input_data
 mnist_data = input_data.read_data_sets('./tmp/MNIST_data', one_hot=True)
+
+# Global Variables
+n_epochs = 5
 
 sess = tf.Session()
 K.set_session(sess)
@@ -16,23 +19,15 @@ img = tf.placeholder(tf.float32, shape=(None, 784))
 labels = tf.placeholder(tf.float32, shape=(None, 10))
 
 # Keras layers can be called on TensorFlow tensors:
-input_layer = tf.reshape(img, [-1, 28, 28, 1])
-conv1 = Conv2D(32, 5, strides=1, padding='same', activation=None, kernel_initializer='he_normal')(input_layer)
-conv1 = tf.nn.local_response_normalization(conv1)										# FIXME
-conv1 = Activation('relu')(conv1)
-conv1 = MaxPooling2D(pool_size=(2, 2), strides=2)(conv1)
-
-conv2 = Conv2D(64, 5, strides=1, padding='same', activation=None, kernel_initializer='he_normal')(conv1)
-conv2 = tf.nn.local_response_normalization(conv2)										# FIXME
-conv2 = Activation('relu')(conv2)
-conv2 = MaxPooling2D(pool_size=(2, 2), strides=2)(conv2)
-
-conv2_flatten = tf.reshape(conv2, [-1, 7*7*64])
-
-dense1 = Dense(1024, activation='relu')(conv2_flatten)
-dense1 = Dropout(0.8)(dense1)
-
-preds = Dense(10, activation='softmax')(dense1)
+x = Dense(128, activation=None)(img)  # fully-connected layer with 128 units and ReLU activation
+# x = tf.nn.relu(x)
+x = Activation('relu')(x)
+x = Dropout(0.5)(x)
+x = Dense(128, activation=None)(x)
+# x = tf.nn.relu(x)
+x = Activation('relu')(x)
+x = Dropout(0.5)(x)
+preds = Dense(10, activation='softmax')(x)  # output layer with 10 units and a softmax activation
 
 # loss funtion
 loss = tf.reduce_mean(categorical_crossentropy(labels, preds))
@@ -46,11 +41,15 @@ sess.run(init_op)
 
 # Run training loop for one epoch
 with sess.as_default():
-    for i in range(100):
-        batch = mnist_data.train.next_batch(50)
-        train_step.run(feed_dict={img: batch[0],
-                                  labels: batch[1],
-                                  K.learning_phase(): 1})
+	for ep in range(n_epochs):
+	    for i in range(100):
+	        batch = mnist_data.train.next_batch(50)
+	        train_step.run(feed_dict={img: batch[0],
+	                                  labels: batch[1],
+	                                  K.learning_phase(): 1})
+	    print("Epoch : " + str(ep+1) +" loss is : " + loss.eval(sess, feed_dict={img: batch[0],
+												                                 labels: batch[1],
+												                                 K.learning_phase(): 0}))
 # Accuracy metric
 acc_value = tf.reduce_mean(accuracy(labels, preds))
 with sess.as_default():
@@ -58,6 +57,10 @@ with sess.as_default():
                                     labels: mnist_data.test.labels,
                                     K.learning_phase(): 0}))
 
-# # Prediction for a given batch of images
+# Saving the model
+saver = tf.train.Saver()
+saver.save(sess, './tmp/models/mnist_ff_keras', global_step=1)								# Let say global_step are the number of epochs the model has gone through
+
+# Load a model and predict
 # predictions = preds.eval(feed_dict={img: img_pred,
 # 									K.learning_phase(): 0})

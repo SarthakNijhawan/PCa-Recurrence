@@ -96,7 +96,7 @@ def cnn_model():
 	dense2 = Dense(320, activation='relu')(dense1)
 	dense2 = Dropout(dropout_prob)(dense2)
 
-	output_softmax = Dense(320, activation='relu')(dense2)
+	preds = Dense(2, activation='softmax')(dense2)
 
 	# loss funtion
 	loss = tf.reduce_mean(categorical_crossentropy(labels, preds))
@@ -104,7 +104,7 @@ def cnn_model():
 	# Training operation
 	train_step = tf.train.GradientDescentOptimizer(0.5).minimize(loss)
 	
-	return [output_softmax, loss, train_step]
+	return [preds, loss, train_step]
 
 # -------------------- Functions for EM Algo -------------------
 def load_imagewise_patches():
