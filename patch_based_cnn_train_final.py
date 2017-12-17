@@ -13,10 +13,16 @@ model_path = './models/patch_based_cnn_model'
 patches_path = '../deepak/DB_HnE_101_anno_cent'
 images_path = '../deepak/sorted_patient_wise_normalized_dataset'
 
-n_iter = 1000														# number of iterations for EM algo to run
+n_iter = 1															# number of iterations for EM algo to run
 
 # @todo : Evaluation in every iteration
-# @todo : 
+# @todo : Local Normalisation
+# @todo : Refine the loading part and make it more (time)efficient
+
+"""
+	patches[0][img_name]={	"patches" : All the patches as stacked numpy arrays 
+							"coord"	  : Center coords of each patch}	
+"""
 
 # --------------------- Main Function ----------------------------
 def main():
@@ -28,37 +34,52 @@ def main():
 	saver = tf.train.Saver()
 
 	# Loads all the patches label wise dictionaries of image wise patches 
-	patches, initial_train_data = load_patches_image_wise(patches_path, images_path)						# TODO
+	patches, initial_train_data = load_patches_image_wise(patches_path, images_path)
 
-	# Initial M-step: Training and predictions of probability maps
+	#################### Initial M-step ######################## 
+	# Training and predictions of probability maps
 	preds, pred_class, loss, train_step = patch_based_cnn_model()
 	for epoch in xrange(1, n_epochs):
 		epoch_loss = 0
-		for i in range(train_x.shape[0]/batch_size):
-			sess.run(train_step, feed_dict={img: train_x[,:,:,:],											# TODO
-											labels: train_y[,:],											# TODO
-											K.learning_phase(): 1})
+		for i in range(int(train_x.shape[0]/batch_size)+1):
+			if i == int(train_x.shape[0]/batch_size):
+				sess.run(train_step, feed_dict={img: train_x[i*batch_size:,:,:,:],											
+												labels: train_y[i*batch_size:,:],
+												K.learning_phase(): 1})
+			else:
+				sess.run(train_step, feed_dict={img: train_x[i*batch_size:(i+1)*batch_size,:,:,:],
+												labels: train_y[i*batch_size:(i+1)*batch_size,:],
+												K.learning_phase(): 1})
+
 		print("Epoch :", epoch, "loss is :", epoch_loss)
 
-	# 2nd Iteration onwards
+	#################### 2nd Iteration Onwards ########################
 	for itr in range(n_iter-1):
 		# E-step
 		predicted_maps = []
 		for i in range(2):
-			predicted_maps[i] = {}
-			for image in patches[i].keys:
-				predicted_maps[i]{image} = sess.run(preds, feed_dict={	img: patches[i]{image},
-																   		K.learning_phase(): 0})
-		train_data = E_step(predicted_maps)																	# TODO
+			labeled_predicted_maps = {}
+			for image in patches[i].keys():
+				labeled_predicted_maps[image] = sess.run(preds, feed_dict={	img: patches[i][image]["patches"],
+																   			K.learning_phase(): 0})
+		predicted_maps += [labeled_predicted_maps,]
+
+		train_data = E_step(predicted_maps, patches, img_lvl_pctl, class_lvl_pctl)																	# TODO
 
 		# M-Step
 		for epoch in xrange(1, n_epochs):
 			epoch_loss = 0
-			for i in range(train_x.shape[0]/batch_size):
-				sess.run(train_step, feed_dict={img: train_x[,:,:,:],										# TODO
-												labels: train_y[,:],										# TODO
-												K.learning_phase(): 1})
-			print("Epoch :", epoch, "loss is :", epoch_loss)
+			for i in range(int(train_x.shape[0]/batch_size)+1):
+				if i == int(train_x.shape[0]/batch_size):
+					sess.run(train_step, feed_dict={img: train_x[i*batch_size:,:,:,:],											
+													labels: train_y[i*batch_size:,:],
+													K.learning_phase(): 1})
+				else:
+					sess.run(train_step, feed_dict={img: train_x[i*batch_size:(i+1)*batch_size,:,:,:],
+													labels: train_y[i*batch_size:(i+1)*batch_size,:],
+													K.learning_phase(): 1})
+
+			# print("Epoch :", epoch, "loss is :", epoch_loss)
 
 	# saving the model
 	saver.save(sess, model_path)
@@ -80,12 +101,12 @@ def patch_based_cnn_model(dropout_prob=0.5, l_rate=0.5, n_classes=2):
 
 	# Layers
 	conv1 = Conv2D(80, 6, strides=1, padding='same', activation=None, kernel_initializer='he_normal')(img)
-	conv1 = tf.nn.local_response_normalisation(conv1)														# FIXME
+	conv1 = tf.nn.local_response_normalisation(conv1)
 	conv1 = Activation('relu')(conv1)
 	conv1 = MaxPooling2D(pool_size=(2, 2), strides=2)(conv1)
 
 	conv2 = Conv2D(120, 5, strides=1, padding='same', activation=None, kernel_initializer='he_normal')(conv1)
-	conv2 = tf.nn.local_response_normalisation(conv2)														# FIXME
+	conv2 = tf.nn.local_response_normalisation(conv2)
 	conv2 = Activation('relu')(conv2)
 	conv2 = MaxPooling2D(pool_size=(2, 2), strides=2)(conv2)
 
@@ -120,7 +141,7 @@ def patch_based_cnn_model(dropout_prob=0.5, l_rate=0.5, n_classes=2):
 ##################################################################
 #--------------------- EM Algo Helper functions -------------------#
 ##################################################################
-def load_patches_image_wise(cent_patches_dir, normalised_dataset_dir):
+def load_patches_image_wise(cent_patches_dir, normalised_dataset_dir, n_classes=2):
 	""" - Loads all the images and splits them into patches for prediction
 		and updation of training data for every iteration in the applied
 		EM algo for training he model
@@ -130,61 +151,97 @@ def load_patches_image_wise(cent_patches_dir, normalised_dataset_dir):
 	"""
 
 	img_wise_patches = []
-	train_data = []
+	init_train_data = [1, 2]																	# Initialised for a check as a list of int
+	one_hot_vec = np.zeros(shape=(1, n_classes))
 
-	for i in range(2):												# iterated over label 1 and 0
-		labeled_img_wise_patches = {}
-		patient_wise_image_names = {}								# dict with img patient as keys and list of associated image names
-
-		labeled_images_dir = os.path.join(normalised_dataset_dir, 'label_'+str(i))		
-		patient_wise_images_dirlist = os.listdir(labeled_images_dir)
-		for patient_dirname in patient_wise_images_dirlist:
-			patient_id = patient_dirname.split("_")[0]
-			patient_wise_image_names{patient_id} = []
-
-			patient_dir_path = os.path.join(labeled_images_dir, patient_dirname)
-			file_list = os.listdir(patient_dir_path)
-			for filename in file_list:
-				if file.endswith(".xml"):
-					patient_wise_image_names{patient_id} += [filename.split(".")[0],]
-					labeled_img_wise_patches{filename.split(".")[0]} = []			# initialises every dict element for an image to an empty list
-
+	for i in range(n_classes):																	# iterated over label 1 and 0
+		one_hot_vec[0,i] = 1
 		labeled_patches_dir = os.path.join(cent_patches_dir, 'label_'+str(i))
 		patient_wise_patches_dirlist = os.listdir(labeled_patches_dir)
+		labeled_img_wise_patches = {}
 		for patient_dirname in patient_wise_patches_dirlist:
-			patient_id = patient_img_dirname.split("_")[0]			# for every patient image
 			patient_dir_path = os.path.join(labeled_patches_dir, patient_dirname)
 			patch_list = os.listdir(patient_dir_path)
 			for patchname in patch_list:
 				patch_path = os.path.join(patient_dir_path, patchname)
-				img_name = patchname.split("_")[-1].split(".")[0]
-				labeled_img_wise_patches{img_name} += [load_patch(patch_path),]
+				
+				patch_name_split = patchname.split("_")											# 1000104570_999_913_PrognosisTMABlock3_F_4_5_H&E0.png
+				img_name = "_".join(patch_name_split[3:]).split(".")[0]
+				patch_coord = [int(patch_name_split[1]), int(patch_name_split[2])]
+				
+				patch = load_patch(patch_path)
+				patch = np.reshape(patch, (1, 101, 101, 3))
+				
+				if img_name in labeled_img_wise_patches.keys():
+					labeled_img_wise_patches[img_name]["patches"] = np.concatenate((labeled_img_wise_patches[img_name], patch))
+					labeled_img_wise_patches[img_name]["coord"] += [patch_coord,]
+				else:
+					labeled_img_wise_patches[img_name] = {}
+					labeled_img_wise_patches[img_name]["patches"] = patch
+					labeled_img_wise_patches[img_name]["coord"] = [patch_coord,]
+				
+				if type(init_train_data[0]) is np.ndarray:
+					init_train_data[0] = np.concatenate((init_train_data[0], patch))
+					init_train_data[1] = np.concatenate((init_train_data[1], one_hot_vec))
+				else:
+					init_train_data[0] = patch
+					init_train_data[1] = one_hot_vec
 
-		img_wise_patches += [labeled_img_wise_patches,] 
+		img_wise_patches += [labeled_img_wise_patches,]
+
+	print(len(img_wise_patches[0]))
+	print(init_train_data[0].shape)
+	print(init_train_data[1].shape)
 
 	return [img_wise_patches, init_train_data]
 
 
-def E_step(predicted_maps):
+def E_step(predicted_maps, img_wise_patches, img_lvl_pctl=30, class_lvl_pctl=30, n_classes=2):
 	""" - Applies gaussian smoothing to the predicted probability maps
 		- Generates bit mask for acceptable()discriminative patches for the next M_step
 		- Returns:
 				Refined training data for the next step
 	"""
+	new_train_data = [1, 2]															# Initialised for a check as a list of int
+	one_hot_vec = np.zeros(shape=(1, n_classes))
 
-	for labeled_dict in predicted_maps:
-		for img_name in labeled_dict.keys:
+	for i in range(n_classes):																# Iterating over all the labels
+		one_hot_vec[0,i] = 1
+		class_prob_map = []
+		
+		for img_name in predicted_maps[i].keys():
+			if type(class_prob_map) is np.ndarray:
+				class_prob_map = np.concatenate((class_prob_map, predicted_maps[i][img_name]))
+			else:
+				class_prob_map = predicted_maps[i][img_name]
+
+		for img_name in predicted_maps[i].keys():											# iterating over images
 			reconstructed_probab_map = np.zeros([101,101])
-			
-			for patch_tuple in labeled_dict[img_name]:
-				center_coord = patch_tuple[:2]
-				probability = patch_tuple[2]
+
+			for j in range(len(patches[i][img_name]["coord"])):								# iterating over patches
+				center_coord = patches[i][img_name]["coord"][j]
+				probability = predicted_maps[i][img_name][j,i]
 				orig_patch_probab = reconstructed_probab_map[center_coord[0]-50: center_coord[0]+50, center_coord[1]-50:center_coord[1]+50]
-				new_patch_prob = probability*np.gkern()
+				new_patch_prob = probability*np.GaussianKernel()
 				reconstructed_probab_map[center_coord[0]-50: center_coord[0]+50, center_coord[1]-50:center_coord[1]+50] = 
 						np.maximum(orig_patch, new_patch_prob)
+
+			img_lvl_thresh = np.percentile(predicted_maps[i][img_name][:,i], axis=0)
+			class_lvl_thresh = np.percentile(class_prob_map, axis=0)
+
+			threshold = min(img_lvl_thresh, class_lvl_thresh)
+			discriminative_mask = (reconstructed_probab_map>threshold) | (reconstructed_probab_map==threshold)
 			
-			# threshold = 
+			for j in range(len(patches[i][img_name]["coord"])):
+				coord = patches[i][img_name]["coord"][i]
+				if discriminative_mask[coord[0], coord[1]]:
+					patch = np.reshape(patches[i][img_name]["patches"][j], [1, 101, 101, 3])
+					if type(new_train_data[0]) is np.ndarray:
+						new_train_data[0] = np.concatenate((new_train_data[0], patch))
+						new_train_data[1] = np.concatenate((new_train_data[1], one_hot_vec))
+					else:
+						new_train_data[0] = patch
+						new_train_data[1] = one_hot_vec
 
 	return new_train_data
 
@@ -192,43 +249,15 @@ def E_step(predicted_maps):
 #################################################################
 # -------------------- Other Helper functions ------------------#
 #################################################################
-def load_image(img_path):
-	img = cv2.imread(img_path)
-	img_tensor = tf.convert_to_tensor(img)
-	return tf.reshape(img_tensor, [1,101,101,3])					# Reshaping so that it can be processed further into batches on axis=0
+def load_patch(img_path):
+	return cv2.imread(img_path)
 
-# local response normalization on images (Adapted Code)
-# def lrn(x):
-# 	""" Custom made normalisation layer for Keras """
-#     ones_for_weight = np.reshape(np.ones((32, 32)), (1,32,32))
-#     mu = sum_pool2d(x, pool_size = (7, 7), strides = (1, 1), padding = (3, 3))
-#     mu_weight = sum_pool2d(ones_for_weight, pool_size = (7, 7), strides = (1, 1), padding = (3, 3))
-#     sum_sq_x = sum_pool2d(K.square(x), pool_size = (7, 7), strides = (1, 1), padding = (3, 3))
-#     total_mu_sq = mu_weight * K.square(mu)
-#     sq_cross_term = -2 * K.square(mu)
-#     sigma = K.sqrt(sum_sq_x + total_mu_sq + sq_cross_term)
-#     return (x - mu)/(sigma + 1)
+def GaussianKernel(ksize=100, nsig=30):
+	gauss1D = cv2.getGaussianKernel(ksize, nsig)
+	gauss2D = gauss1D*np.transpose(gauss1D)
+	gauss2D = gauss2D/gauss2D[int(ksize/2), int(ksize/2)]
+	return gauss2D
 
-# # def lcn_output_shape(input_shape):
-# #     return input_shape
-
-
-# def sum_pool2d(x, pool_size = (7, 7), strides = (1, 1), padding = (3, 3)):
-#     sum_x = pool.pool_2d(x, ds = pool_size, st = strides, mode = 'sum', padding = padding, ignore_border = True)
-#     return sum_x
-
-# # def sum_pool2d_output_shape(input_shape):
-# #     return input_shape
-
-def gkern(kernlen=101, nsig=3):
-    """Returns a 2D Gaussian kernel array."""
-
-    interval = (2*nsig+1.)/(kernlen)
-    x = np.linspace(-nsig-interval/2., nsig+interval/2., kernlen+1)
-    kern1d = np.diff(st.norm.cdf(x))
-    kernel_raw = np.sqrt(np.outer(kern1d, kern1d))
-    kernel = kernel_raw/kernel_raw.sum()
-    return kernel
 
 if __name__ == '__main__':
 	main()
