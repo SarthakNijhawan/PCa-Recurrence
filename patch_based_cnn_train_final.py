@@ -18,6 +18,7 @@ n_iter = 1															# number of iterations for EM algo to run
 # @todo : Evaluation in every iteration
 # @todo : Local Normalisation
 # @todo : Refine the loading part and make it more (time)efficient
+# @todo : Description
 
 """
 	patches[0][img_name]={	"patches" : All the patches as stacked numpy arrays 
