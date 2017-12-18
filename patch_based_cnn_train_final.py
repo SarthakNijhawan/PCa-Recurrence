@@ -49,20 +49,10 @@ def main():
 	#################### Initial M-step ######################## 
 	# Training and predictions of probability maps
 	preds, pred_class, loss, train_step = patch_based_cnn_model()
-	for epoch in xrange(1, 10):																		#TODO
-		epoch_loss = 0
-		for i in range(int(train_x.shape[0]/batch_size)+1):
-			if i == int(train_x.shape[0]/batch_size):
-				sess.run(train_step, feed_dict={img: train_x[i*batch_size:,:,:,:],											
-												labels: train_y[i*batch_size:,:],
-												K.learning_phase(): 1})
-			else:
-				sess.run(train_step, feed_dict={img: train_x[i*batch_size:(i+1)*batch_size,:,:,:],
-												labels: train_y[i*batch_size:(i+1)*batch_size,:],
-												K.learning_phase(): 1})
-		# Validation part 																			#TODO
+	train(sess, data_path, n_epochs=10)
+			
+	# Validation part 																				#TODO
 
-		print("Epoch :", epoch, "loss is :", epoch_loss)
 
 	#################### 2nd Iteration Onwards ########################
 	for itr in range(n_iter-1):
@@ -75,22 +65,12 @@ def main():
 																   			K.learning_phase(): 0})
 		predicted_maps += [labeled_predicted_maps,]
 
-		train_data = E_step(predicted_maps, patches, img_lvl_pctl, class_lvl_pctl)					#TODO
+		E_step(predicted_maps, patches, img_lvl_pctl, class_lvl_pctl)								#TODO
 
 		# M-Step
-		for epoch in xrange(1, n_epochs):
-			epoch_loss = 0																			#TODO
-			for i in range(int(train_x.shape[0]/batch_size)+1):
-				if i == int(train_x.shape[0]/batch_size):
-					sess.run(train_step, feed_dict={img: train_x[i*batch_size:,:,:,:],											
-													labels: train_y[i*batch_size:,:],
-													K.learning_phase(): 1})
-				else:
-					sess.run(train_step, feed_dict={img: train_x[i*batch_size:(i+1)*batch_size,:,:,:],
-													labels: train_y[i*batch_size:(i+1)*batch_size,:],
-													K.learning_phase(): 1})
-
-			# print("Epoch :", epoch, "loss is :", epoch_loss)
+		train(sess, data_path)
+		
+		# Validation part 																				#TODO
 
 	# saving the model
 	saver.save(sess, model_path)
@@ -147,6 +127,21 @@ def patch_based_cnn_model(dropout_prob=0.5, l_rate=0.5, n_classes=2):
 
 	return [preds, pred_class, loss, train_step]
 
+def train(sess, data_path, n_epochs=2):
+	for epoch in xrange(1, n_epochs):
+		epoch_loss = 0
+		train_data_path = os.path.join(data_path, "train")
+		batch_list = os.listdir(train_data_path)
+		for batch in batch_list:
+			patches_file = os.path.join(train_data_path, batch, "patches.npy")
+			labels_file = os.path.join(train_data_path, batch, "label.npy")
+
+			patches = np.load(patches_file)
+			labels = np.load(labels_file)
+
+			sess.run(train_step, feed_dict={img: patches,											
+											labels: labels,
+											K.learning_phase(): 1})
 
 
 ##################################################################
