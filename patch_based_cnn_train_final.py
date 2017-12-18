@@ -9,16 +9,17 @@ from keras.objectives import categorical_crossentropy
 from keras import backend as K
 
 # --------------------- Global Variables -------------------------
-model_path = './models/patch_based_cnn_model'
+# model_path = './models/patch_based_cnn_model'
 patient_wise_patches_path = '../deepak/DB_HnE_101_anno_cent'
-img_wise_patches_path = './img_wise_patches/'
-train_data_path = './train_data_path'
+img_wise_patches_path = './img_wise_patches'
+data_path = './data'
 
 n_iter = 1															# number of iterations for EM algo to run
 
 # @todo : Training, test and val set prep
 # @todo : Evaluation in every iteration
 # @todo : 3 classes rather than 2 classes
+# @todo : Saving and loading the model every iteration
 # @todo : Description
 
 
@@ -39,11 +40,11 @@ def main():
 	# Sorts all the patches into image_wise directories
 	# patches, init_train_data = load_patches_image_wise(patches_path)
 	if not os.path.exists(img_wise_patches_path):
-		load_patches_image_wise(patches_path)														#TODO
+		load_patches_image_wise(patches_path)
 
 	# Prepares training data for first iteration in the training direct batch wise
 	if not os.patch.exists(train_data_path):
-		load_init_train_data(patches_path, train_path, test_path, val_path)							#TODO
+		init_data_load(patches_path, train_path, test_path, val_path)
 
 	#################### Initial M-step ######################## 
 	# Training and predictions of probability maps
@@ -252,6 +253,53 @@ def load_patches_image_wise(cent_patches_dir, img_wise_patches_path, n_classes=2
 	# return [img_wise_patches, init_train_data]
 	print("Patches Extraction Completed!!")
 
+def init_data_load(img_wise_patches_path, dest_data_path, batch_size=128):		# dest = destination
+	data_split = ['train', 'test', 'val']
+	batch_number = 1
+	delete_mask = list(range(batch_size))
+	for split in data_split:													# iterating over every split
+		split_img_wise_patches_path = os.path.join(img_wise_patches_path, split)
+		split_data_path = os.path.join(dest_data_path, split)
+		img_list = os.listdir(split_img_wise_patches_path)
+		
+		patches = np.zeros((1,101,101,3))
+		patches = np.delete(patches, [0], axis=0)
+
+		labels = np.zeros((1,2))
+		labels = np.delete(labels, [0], axis=0)
+
+		for img_name in img_list:
+			source_label_file = os.path.join(split_img_wise_patches_path, img_name, "label.npy")
+			source_coord_file = os.path.join(split_img_wise_patches_path, img_name, "coord.npy")
+			source_patches_file = os.path.join(split_img_wise_patches_path, img_name, "patches.npy")
+			
+			patches = np.concatenate((patches, np.load(source_patches_file)))
+			labels = np.concatenate((labels, np.load(source_label_file)))
+
+			while(1):
+				batch_dir = os.path.join(split_data_path, "batch_{}".format(batch_number))
+				dest_patches_file = os.path.join(batch_dir, "patches.npy")
+				dest_label_file = os.path.join(batch_dir, "label.npy")
+				print(patches.shape)
+
+				if patches.shape[0] >= batch_size:
+					if not os.path.exists(batch_dir):
+						os.mkdir(batch_dir)
+
+					np.save(dest_patches_file, patches[0:batch_size])
+					np.save(dest_label_file, labels[0:batch_size])
+
+					patches = np.delete(patches, delete_mask, axis=0)
+					labels = np.delete(labels, delete_mask, axis=0)
+				else:
+					if img_list[-1] is img_name:
+						os.mkdir(batch_dir)
+
+						np.save(dest_patches_file, patches)
+						np.save(dest_label_file, labels)						
+					break
+
+				batch_number += 1
 
 def E_step(predicted_maps, img_wise_patches, img_lvl_pctl=30, class_lvl_pctl=30, n_classes=2):
 	""" - Applies gaussian smoothing to the predicted probability maps
