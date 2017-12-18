@@ -10,15 +10,17 @@ from keras import backend as K
 
 # --------------------- Global Variables -------------------------
 model_path = './models/patch_based_cnn_model'
-patches_path = '../deepak/DB_HnE_101_anno_cent'
-images_path = '../deepak/sorted_patient_wise_normalized_dataset'
+patient_wise_patches_path = '../deepak/DB_HnE_101_anno_cent'
+img_wise_patches_path = './img_wise_patches/'
+train_data_path = './train_data_path'
 
 n_iter = 1															# number of iterations for EM algo to run
 
+# @todo : Training, test and val set prep
 # @todo : Evaluation in every iteration
-# @todo : Local Normalisation
-# @todo : Refine the loading part and make it more (time)efficient
+# @todo : 3 classes rather than 2 classes
 # @todo : Description
+
 
 """
 	patches[0][img_name]={	"patches" : All the patches as stacked numpy arrays 
@@ -34,13 +36,19 @@ def main():
 
 	saver = tf.train.Saver()
 
-	# Loads all the patches label wise dictionaries of image wise patches 
-	patches, initial_train_data = load_patches_image_wise(patches_path, images_path)
+	# Sorts all the patches into image_wise directories
+	# patches, init_train_data = load_patches_image_wise(patches_path)
+	if not os.path.exists(img_wise_patches_path):
+		load_patches_image_wise(patches_path)
+
+	# Prepares training data for first iteration in the training direct batch wise
+	if not os.patch.exists(train_data_path):
+		load_init_train_data(patches_path, train_data_path)											#TODO
 
 	#################### Initial M-step ######################## 
 	# Training and predictions of probability maps
 	preds, pred_class, loss, train_step = patch_based_cnn_model()
-	for epoch in xrange(1, n_epochs):
+	for epoch in xrange(1, 10):																		#TODO
 		epoch_loss = 0
 		for i in range(int(train_x.shape[0]/batch_size)+1):
 			if i == int(train_x.shape[0]/batch_size):
@@ -51,13 +59,14 @@ def main():
 				sess.run(train_step, feed_dict={img: train_x[i*batch_size:(i+1)*batch_size,:,:,:],
 												labels: train_y[i*batch_size:(i+1)*batch_size,:],
 												K.learning_phase(): 1})
+		# Validation part 																			#TODO
 
 		print("Epoch :", epoch, "loss is :", epoch_loss)
 
 	#################### 2nd Iteration Onwards ########################
 	for itr in range(n_iter-1):
 		# E-step
-		predicted_maps = []
+		predicted_maps = []																			#TODO
 		for i in range(2):
 			labeled_predicted_maps = {}
 			for image in patches[i].keys():
@@ -65,11 +74,11 @@ def main():
 																   			K.learning_phase(): 0})
 		predicted_maps += [labeled_predicted_maps,]
 
-		train_data = E_step(predicted_maps, patches, img_lvl_pctl, class_lvl_pctl)																	# TODO
+		train_data = E_step(predicted_maps, patches, img_lvl_pctl, class_lvl_pctl)					#TODO
 
 		# M-Step
 		for epoch in xrange(1, n_epochs):
-			epoch_loss = 0
+			epoch_loss = 0																			#TODO
 			for i in range(int(train_x.shape[0]/batch_size)+1):
 				if i == int(train_x.shape[0]/batch_size):
 					sess.run(train_step, feed_dict={img: train_x[i*batch_size:,:,:,:],											
@@ -142,7 +151,7 @@ def patch_based_cnn_model(dropout_prob=0.5, l_rate=0.5, n_classes=2):
 ##################################################################
 #--------------------- EM Algo Helper functions -------------------#
 ##################################################################
-def load_patches_image_wise(cent_patches_dir, normalised_dataset_dir, n_classes=2):
+def load_patches_image_wise(cent_patches_dir, img_wise_patches_path, n_classes=2):
 	""" - Loads all the images and splits them into patches for prediction
 		and updation of training data for every iteration in the applied
 		EM algo for training he model
@@ -151,50 +160,69 @@ def load_patches_image_wise(cent_patches_dir, normalised_dataset_dir, n_classes=
 
 	"""
 
-	img_wise_patches = []
-	init_train_data = [1, 2]																	# Initialised for a check as a list of int
+	# img_wise_patches = []
+	# init_train_data = [1, 2]																	# Initialised for a check as a list of int
 	one_hot_vec = np.zeros(shape=(1, n_classes))
 
 	for i in range(n_classes):																	# iterated over label 1 and 0
 		one_hot_vec[0,i] = 1
 		labeled_patches_dir = os.path.join(cent_patches_dir, 'label_'+str(i))
 		patient_wise_patches_dirlist = os.listdir(labeled_patches_dir)
-		labeled_img_wise_patches = {}
+		# labeled_img_wise_patches = {}
+		print("Starting for label ", i)
 		for patient_dirname in patient_wise_patches_dirlist:
 			patient_dir_path = os.path.join(labeled_patches_dir, patient_dirname)
 			patch_list = os.listdir(patient_dir_path)
+			img_wise_patches = {}
 			for patchname in patch_list:
 				patch_path = os.path.join(patient_dir_path, patchname)
 				
 				patch_name_split = patchname.split("_")											# 1000104570_999_913_PrognosisTMABlock3_F_4_5_H&E0.png
-				img_name = "_".join(patch_name_split[3:]).split(".")[0]
-				patch_coord = [int(patch_name_split[1]), int(patch_name_split[2])]
+				img_name = "_".join([patch_name_split[0],]+patch_name_split[3:]).split(".")[0]	# img_name = 1000104570_PrognosisTMABlock3_F_4_5_H&E0
+				patch_coord = np.array([[int(patch_name_split[1]), int(patch_name_split[2])]])	# patch_coord as numpy arrays of shape = (1,2)
 				
 				patch = load_patch(patch_path)
 				patch = np.reshape(patch, (1, 101, 101, 3))
 				
-				if img_name in labeled_img_wise_patches.keys():
-					labeled_img_wise_patches[img_name]["patches"] = np.concatenate((labeled_img_wise_patches[img_name], patch))
-					labeled_img_wise_patches[img_name]["coord"] += [patch_coord,]
+				if img_name in img_wise_patches.keys():
+					img_wise_patches[img_name]["patches"] = np.concatenate((img_wise_patches[img_name]["patches"], patch))
+					img_wise_patches[img_name]["coord"]  = np.concatenate((img_wise_patches[img_name]["coord"], patch_coord))
+					img_wise_patches[img_name]["label"] = np.concatenate((img_wise_patches[img_name]["label"], one_hot_vec))
 				else:
-					labeled_img_wise_patches[img_name] = {}
-					labeled_img_wise_patches[img_name]["patches"] = patch
-					labeled_img_wise_patches[img_name]["coord"] = [patch_coord,]
-				
-				if type(init_train_data[0]) is np.ndarray:
-					init_train_data[0] = np.concatenate((init_train_data[0], patch))
-					init_train_data[1] = np.concatenate((init_train_data[1], one_hot_vec))
-				else:
-					init_train_data[0] = patch
-					init_train_data[1] = one_hot_vec
+					img_wise_patches[img_name] = {}
+					img_wise_patches[img_name]["label"] = one_hot_vec 
+					img_wise_patches[img_name]["patches"] = patch
+					img_wise_patches[img_name]["coord"] = patch_coord
+			
+			for img_name in img_wise_patches.keys():
+				img_dir = os.path.join(img_wise_patches_path, img_name)
+				if not os.path.exists(img_dir):
+					os.mkdir(img_dir)
+					patches_file = os.path.join(img_dir, "patches")
+					label_file = os.path.join(img_dir, "label")
+					coord_file = os.path.join(img_dir, "coord")
 
-		img_wise_patches += [labeled_img_wise_patches,]
+					np.save("patches", img_wise_patches[img_name]["patches"])
+					np.save("label", img_wise_patches[img_name]["label"])
+					np.save("coord", img_wise_patches[img_name]["coord"])
 
-	print(len(img_wise_patches[0]))
-	print(init_train_data[0].shape)
-	print(init_train_data[1].shape)
+			print("Completed for patient :", patient_dirname.split("_")[0])
 
-	return [img_wise_patches, init_train_data]
+				# if type(init_train_data[0]) is np.ndarray:
+				# 	init_train_data[0] = np.concatenate((init_train_data[0], patch))
+				# 	init_train_data[1] = np.concatenate((init_train_data[1], one_hot_vec))
+				# else:
+				# 	init_train_data[0] = patch
+				# 	init_train_data[1] = one_hot_vec
+
+		# img_wise_patches += [labeled_img_wise_patches,]
+
+	# print(len(img_wise_patches[0]))
+	# print(init_train_data[0].shape)
+	# print(init_train_data[1].shape)
+
+	# return [img_wise_patches, init_train_data]
+	print("Patches Extraction Completed!!")
 
 
 def E_step(predicted_maps, img_wise_patches, img_lvl_pctl=30, class_lvl_pctl=30, n_classes=2):
