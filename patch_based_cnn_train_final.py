@@ -39,11 +39,11 @@ def main():
 	# Sorts all the patches into image_wise directories
 	# patches, init_train_data = load_patches_image_wise(patches_path)
 	if not os.path.exists(img_wise_patches_path):
-		load_patches_image_wise(patches_path)
+		load_patches_image_wise(patches_path)														#TODO
 
 	# Prepares training data for first iteration in the training direct batch wise
 	if not os.patch.exists(train_data_path):
-		load_init_train_data(patches_path, train_data_path)											#TODO
+		load_init_train_data(patches_path, train_path, test_path, val_path)							#TODO
 
 	#################### Initial M-step ######################## 
 	# Training and predictions of probability maps
@@ -164,26 +164,53 @@ def load_patches_image_wise(cent_patches_dir, img_wise_patches_path, n_classes=2
 	# init_train_data = [1, 2]																	# Initialised for a check as a list of int
 	one_hot_vec = np.zeros(shape=(1, n_classes))
 
+
 	for i in range(n_classes):																	# iterated over label 1 and 0
+		# Load train, test and val patient ids list
+		train_list = []
+		test_list = []
+		val_list = []
+
+		with open("train_{}.txt".format(i)) as myfile:
+			train_list = myfile.readlines()
+
+		with open("val_{}.txt".format(i)) as myfile:
+			val_list = myfile.readlines()
+
+		with open("test_{}.txt".format(i)) as myfile:
+			test_list = myfile.readlines()
+
 		one_hot_vec[0,i] = 1
 		labeled_patches_dir = os.path.join(cent_patches_dir, 'label_'+str(i))
 		patient_wise_patches_dirlist = os.listdir(labeled_patches_dir)
 		# labeled_img_wise_patches = {}
 		print("Starting for label ", i)
 		for patient_dirname in patient_wise_patches_dirlist:
+			patient_id = patient_dirname.split("_")[0]
 			patient_dir_path = os.path.join(labeled_patches_dir, patient_dirname)
 			patch_list = os.listdir(patient_dir_path)
 			img_wise_patches = {}
+			
+			if (patient_id + "\n") in train_list:
+				data_split = "train"
+			elif (patient_id + "\n") in test_list:
+				data_split = "test"
+			elif (patient_id + "\n") in val_list:
+				data_split = "val"
+			else:
+				continue
+
 			for patchname in patch_list:
 				patch_path = os.path.join(patient_dir_path, patchname)
 				
 				patch_name_split = patchname.split("_")											# 1000104570_999_913_PrognosisTMABlock3_F_4_5_H&E0.png
-				img_name = "_".join([patch_name_split[0],]+patch_name_split[3:]).split(".")[0]	# img_name = 1000104570_PrognosisTMABlock3_F_4_5_H&E0
+				img_name = "_".join([patch_name_split[0],]+patch_name_split[3:]).split(".")[0]	# img_name = "1000104570_PrognosisTMABlock3_F_4_5_H&E0_%d".format(i)
+				img_name += "_{}".format(i)
 				patch_coord = np.array([[int(patch_name_split[1]), int(patch_name_split[2])]])	# patch_coord as numpy arrays of shape = (1,2)
 				
 				patch = load_patch(patch_path)
 				patch = np.reshape(patch, (1, 101, 101, 3))
-				
+
 				if img_name in img_wise_patches.keys():
 					img_wise_patches[img_name]["patches"] = np.concatenate((img_wise_patches[img_name]["patches"], patch))
 					img_wise_patches[img_name]["coord"]  = np.concatenate((img_wise_patches[img_name]["coord"], patch_coord))
@@ -193,20 +220,21 @@ def load_patches_image_wise(cent_patches_dir, img_wise_patches_path, n_classes=2
 					img_wise_patches[img_name]["label"] = one_hot_vec 
 					img_wise_patches[img_name]["patches"] = patch
 					img_wise_patches[img_name]["coord"] = patch_coord
+					img_wise_patches[img_name]["data_split"] = data_split
 			
 			for img_name in img_wise_patches.keys():
-				img_dir = os.path.join(img_wise_patches_path, img_name)
+				img_dir = os.path.join(img_wise_patches_path, img_wise_patches[img_name]["data_split"], img_name)
 				if not os.path.exists(img_dir):
 					os.mkdir(img_dir)
 					patches_file = os.path.join(img_dir, "patches")
 					label_file = os.path.join(img_dir, "label")
 					coord_file = os.path.join(img_dir, "coord")
 
-					np.save("patches", img_wise_patches[img_name]["patches"])
-					np.save("label", img_wise_patches[img_name]["label"])
-					np.save("coord", img_wise_patches[img_name]["coord"])
+					np.save(patches_file, img_wise_patches[img_name]["patches"])
+					np.save(label_file, img_wise_patches[img_name]["label"])
+					np.save(coord_file, img_wise_patches[img_name]["coord"])
 
-			print("Completed for patient :", patient_dirname.split("_")[0])
+			print("Completed for patient :", patient_id)
 
 				# if type(init_train_data[0]) is np.ndarray:
 				# 	init_train_data[0] = np.concatenate((init_train_data[0], patch))
