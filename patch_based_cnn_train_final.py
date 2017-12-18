@@ -43,7 +43,7 @@ def main():
 		load_patches_image_wise(patches_path)
 
 	# Prepares training data for first iteration in the training direct batch wise
-	if not os.patch.exists(train_data_path):
+	if not os.patch.exists(data_path):
 		init_data_load(patches_path, train_path, test_path, val_path)
 
 	#################### Initial M-step ######################## 
@@ -55,22 +55,17 @@ def main():
 
 
 	#################### 2nd Iteration Onwards ########################
+	train_img_wise_patches_path = os.path.join(img_wise_patches_path, "train")
 	for itr in range(n_iter-1):
 		# E-step
-		predicted_maps = []																			#TODO
-		for i in range(2):
-			labeled_predicted_maps = {}
-			for image in patches[i].keys():
-				labeled_predicted_maps[image] = sess.run(preds, feed_dict={	img: patches[i][image]["patches"],
-																   			K.learning_phase(): 0})
-		predicted_maps += [labeled_predicted_maps,]
+		generate_predicted_maps(sess, img_wise_patches_path)
 
-		E_step(predicted_maps, patches, img_lvl_pctl, class_lvl_pctl)								#TODO
+		E_step(img_wise_patches_path, img_lvl_pctl, class_lvl_pctl)									#TODO
 
 		# M-Step
 		train(sess, data_path)
-		
-		# Validation part 																				#TODO
+
+		# Validation part 																			#TODO
 
 	# saving the model
 	saver.save(sess, model_path)
@@ -250,13 +245,14 @@ def load_patches_image_wise(cent_patches_dir, img_wise_patches_path, n_classes=2
 
 def init_data_load(img_wise_patches_path, dest_data_path, batch_size=128):		# dest = destination
 	data_split = ['train', 'test', 'val']
-	batch_number = 1
 	delete_mask = list(range(batch_size))
 	for split in data_split:													# iterating over every split
+		batch_number = 1
+
 		split_img_wise_patches_path = os.path.join(img_wise_patches_path, split)
 		split_data_path = os.path.join(dest_data_path, split)
 		img_list = os.listdir(split_img_wise_patches_path)
-		
+
 		patches = np.zeros((1,101,101,3))
 		patches = np.delete(patches, [0], axis=0)
 
@@ -296,54 +292,70 @@ def init_data_load(img_wise_patches_path, dest_data_path, batch_size=128):		# de
 
 				batch_number += 1
 
+def generate_predicted_maps(sess, img_wise_patches_path):
+	train_img_wise_patches_path = os.path.join(img_wise_patches, "train")
+	img_dirname_list = os.listdir(train_img_wise_patches_path)
+	
+	for img_dirname in img_dirname_list:
+		patches_dir = os.path.join(train_img_wise_patches_path, img_dirname)
+		patches_file = os.path.join(patches_dir, "patches.npy")
+		probab_file = os.path.join(patches_dir, "probability_map.npy")
+		patches = np.load(patches_file)
+		img_label = int(img_dirname.split("_")[-1])
+		predicted_map_array = sess.run(preds, feed_dict={	img: patches,
+												   			K.learning_phase(): 0})
+		predicted_maps_per_image = predicted_map_array[:, img_label]
+		np.save(probab_file, predicted_maps_per_image)
+
+
 def E_step(predicted_maps, img_wise_patches, img_lvl_pctl=30, class_lvl_pctl=30, n_classes=2):
 	""" - Applies gaussian smoothing to the predicted probability maps
 		- Generates bit mask for acceptable()discriminative patches for the next M_step
 		- Returns:
 				Refined training data for the next step
 	"""
-	new_train_data = [1, 2]															# Initialised for a check as a list of int
-	one_hot_vec = np.zeros(shape=(1, n_classes))
+	# new_train_data = [1, 2]															# Initialised for a check as a list of int
+	# one_hot_vec = np.zeros(shape=(1, n_classes))
 
-	for i in range(n_classes):																# Iterating over all the labels
-		one_hot_vec[0,i] = 1
-		class_prob_map = []
+	# for i in range(n_classes):																# Iterating over all the labels
+	# 	one_hot_vec[0,i] = 1
+		# class_prob_map = []
+	
+	for img_name in predicted_maps[i].keys():
+		if type(class_prob_map) is np.ndarray:
+			class_prob_map = np.concatenate((class_prob_map, predicted_maps[i][img_name]))
+		else:
+			class_prob_map = predicted_maps[i][img_name]
+
+	for img_name in predicted_maps[i].keys():											# iterating over images
+		reconstructed_probab_map = np.zeros([101,101])
+
+		for j in range(len(patches[i][img_name]["coord"])):								# iterating over patches
+			center_coord = patches[i][img_name]["coord"][j]
+			probability = predicted_maps[i][img_name][j,i]
+			orig_patch_probab = reconstructed_probab_map[center_coord[0]-50: center_coord[0]+50, center_coord[1]-50:center_coord[1]+50]
+			new_patch_prob = probability*np.GaussianKernel()
+			reconstructed_probab_map[center_coord[0]-50: center_coord[0]+50, center_coord[1]-50:center_coord[1]+50] = 
+					np.maximum(orig_patch, new_patch_prob)
+
+		img_lvl_thresh = np.percentile(predicted_maps[i][img_name][:,i], axis=0)
+		class_lvl_thresh = np.percentile(class_prob_map, axis=0)
+
+		threshold = min(img_lvl_thresh, class_lvl_thresh)
+		discriminative_mask = (reconstructed_probab_map>threshold) | (reconstructed_probab_map==threshold)
 		
-		for img_name in predicted_maps[i].keys():
-			if type(class_prob_map) is np.ndarray:
-				class_prob_map = np.concatenate((class_prob_map, predicted_maps[i][img_name]))
-			else:
-				class_prob_map = predicted_maps[i][img_name]
+		for j in range(len(patches[i][img_name]["coord"])):
+			coord = patches[i][img_name]["coord"][i]
+			if discriminative_mask[coord[0], coord[1]]:
+				patch = np.reshape(patches[i][img_name]["patches"][j], [1, 101, 101, 3])
+				if type(new_train_data[0]) is np.ndarray:
+					new_train_data[0] = np.concatenate((new_train_data[0], patch))
+					new_train_data[1] = np.concatenate((new_train_data[1], one_hot_vec))
+				else:
+					new_train_data[0] = patch
+					new_train_data[1] = one_hot_vec
 
-		for img_name in predicted_maps[i].keys():											# iterating over images
-			reconstructed_probab_map = np.zeros([101,101])
-
-			for j in range(len(patches[i][img_name]["coord"])):								# iterating over patches
-				center_coord = patches[i][img_name]["coord"][j]
-				probability = predicted_maps[i][img_name][j,i]
-				orig_patch_probab = reconstructed_probab_map[center_coord[0]-50: center_coord[0]+50, center_coord[1]-50:center_coord[1]+50]
-				new_patch_prob = probability*np.GaussianKernel()
-				reconstructed_probab_map[center_coord[0]-50: center_coord[0]+50, center_coord[1]-50:center_coord[1]+50] = 
-						np.maximum(orig_patch, new_patch_prob)
-
-			img_lvl_thresh = np.percentile(predicted_maps[i][img_name][:,i], axis=0)
-			class_lvl_thresh = np.percentile(class_prob_map, axis=0)
-
-			threshold = min(img_lvl_thresh, class_lvl_thresh)
-			discriminative_mask = (reconstructed_probab_map>threshold) | (reconstructed_probab_map==threshold)
-			
-			for j in range(len(patches[i][img_name]["coord"])):
-				coord = patches[i][img_name]["coord"][i]
-				if discriminative_mask[coord[0], coord[1]]:
-					patch = np.reshape(patches[i][img_name]["patches"][j], [1, 101, 101, 3])
-					if type(new_train_data[0]) is np.ndarray:
-						new_train_data[0] = np.concatenate((new_train_data[0], patch))
-						new_train_data[1] = np.concatenate((new_train_data[1], one_hot_vec))
-					else:
-						new_train_data[0] = patch
-						new_train_data[1] = one_hot_vec
-
-	return new_train_data
+	# return new_train_data
 
 
 #################################################################
