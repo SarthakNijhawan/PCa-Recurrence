@@ -5,6 +5,7 @@ import numpy as np
 import scipy.stats as st
 import tensorflow as tf
 import cv2
+import shutil
 
 from keras.layers import Dense, Dropout, Conv2D, MaxPooling2D, Activation
 from keras.metrics import categorical_accuracy as accuracy
@@ -15,12 +16,14 @@ from keras import backend as K
 # --------------------- Global Variables -------------------------
 # model_path = './models/patch_based_cnn_model'
 model_path = './models'
-patient_wise_patches_path = '../deepak/DB_HnE_101_anno_cent'
-img_wise_patches_path = './img_wise_patches'
-data_path = './data'
+patient_wise_patches_path = './tmp/anno_cent'
+img_wise_patches_path = './tmp/img_wise_patches'
+data_path = './tmp/data'
 
 n_iter = 2
 
+# @todo : code is yet to be made more efficient
+# @todo : accuracy
 # @todo : 3 classes rather than 2 classes
 # @todo : Saving and loading the model every iteration
 # @todo : Description
@@ -39,48 +42,40 @@ def main():
 	K.set_session(sess)
 
 	# Sorts all the patches into image_wise directories
-	load_patches_image_wise(patient_wise_patches_path, img_wise_patches_path)
+	# print("Loading img_wise patches now : ")
+	# load_patches_image_wise(patient_wise_patches_path, img_wise_patches_path)
+	# print("Loading patches imgwise completed!!")
 
-	# Prepares training data for first iteration in the training direct batch wise
-	init_data_load(patches_path, train_path, test_path, val_path)
+	# # Prepares training data for first iteration in the training direct batch wise
+	print("init data being loaded now :")
+	init_data_load(img_wise_patches_path, data_path, val_test_batch_size=1500)
+	print("init data loaded!!!")
 
 	#################### Initial M-step ######################## 
 	# Training and predictions of probability maps
-	preds, pred_class, loss, img, labels, train_step = patch_based_cnn_model(sess)
-	train(sess, data_path, img, labels, train_step, n_epochs=10)
-	
-	# for epoch in range(10):
-	# 	train_data_path = os.path.join(data_path, "train")
-	# 	batch_list = os.listdir(train_data_path)
-	# 	for batch in batch_list:
-	# 		patches_file = os.path.join(train_data_path, batch, "patches.npy")
-	# 		labels_file = os.path.join(train_data_path, batch, "label.npy")
-
-	# 		source_patches = np.load(patches_file)
-	# 		source_labels = np.load(labels_file)
-
-	# 		print("Patches' shape :", source_patches.shape)
-	# 		print("Labels' shape :", source_labels.shape)
-
-	# 		sess.run(train_step, feed_dict={img: source_patches,											
-	# 										labels: source_labels,
-	# 										K.learning_phase(): 1})		
+	preds, accuracy_metric, img, labels, train_step = patch_based_cnn_model(sess)
+	train(sess, data_path, img, labels, train_step, n_epochs=1)												#FIXME
+	print("First iteration of EM algo over")
 
 	# Validation part
-	validate(sess, data_path, img, labels, preds)
+	validate(sess, accuracy_metric, data_path, img, labels)
 
 	#################### 2nd Iteration Onwards ########################
 	train_img_wise_patches_path = os.path.join(img_wise_patches_path, "train")
 	for itr in range(n_iter-1):
 		# E-step
 		generate_predicted_maps(sess, preds, img_wise_patches_path, img=img)
-		E_step(img_wise_patches_path, data_path)
+		print("Probab maps predicted!!")
 
+		E_step(img_wise_patches_path, data_path)
+		print("{}th iteration's E-step performed!!".format(itr+1))
+		
 		# M-Step
 		train(sess, data_path, img, labels, train_step)
+		print("{}th iteration's M-step performed!!".format(itr+1))
 
 		# Validation part
-		validate(sess, data_path, img, labels, preds)
+		validate(sess, accuracy_metric, data_path, img, labels)
 
 	# saving the model
 	saver = tf.train.Saver()
@@ -88,7 +83,7 @@ def main():
 
 	# EM-Algo completed
 	sess.close()
-	print("Completed!!")
+	print("Training Completed!!")
 
 
 
@@ -102,31 +97,30 @@ def patch_based_cnn_model(sess, dropout_prob=0.5, l_rate=0.5, n_classes=2):
 	labels = tf.placeholder(tf.float32, shape=(None, 2))
 
 	# Layers
-	conv1 = Conv2D(80, 6, strides=1, padding='valid', activation=None, kernel_initializer='he_normal')(img)
-	conv1 = tf.nn.local_response_normalization(conv1)
-	conv1 = Activation('relu')(conv1)
-	conv1 = MaxPooling2D(pool_size=(2, 2), strides=2)(conv1)
+	convnet = Conv2D(80, 6, strides=1, padding='valid', activation=None, kernel_initializer='he_normal')(img)
+	convnet = tf.nn.local_response_normalization(convnet)
+	convnet = Activation('relu')(convnet)
+	convnet = MaxPooling2D(pool_size=(2, 2), strides=2)(convnet)
 
-	conv2 = Conv2D(120, 5, strides=1, padding='valid', activation=None, kernel_initializer='he_normal')(conv1)
-	conv2 = tf.nn.local_response_normalization(conv2)
-	conv2 = Activation('relu')(conv2)
-	conv2 = MaxPooling2D(pool_size=(2, 2), strides=2)(conv2)
+	convnet = Conv2D(120, 5, strides=1, padding='valid', activation=None, kernel_initializer='he_normal')(convnet)
+	convnet = tf.nn.local_response_normalization(convnet)
+	convnet = Activation('relu')(convnet)
+	convnet = MaxPooling2D(pool_size=(2, 2), strides=2)(convnet)
 
-	conv3 = Conv2D(160, 3, strides=1, padding='valid', activation=None, kernel_initializer='he_normal')(conv2)
+	convnet = Conv2D(160, 3, strides=1, padding='valid', activation=None, kernel_initializer='he_normal')(convnet)
 	
-	conv4 = Conv2D(200, 3, strides=1, padding='valid', activation=None, kernel_initializer='he_normal')(conv3)
-	conv4 = MaxPooling2D(pool_size=(2, 2), strides=2)(conv4)
+	convnet = Conv2D(200, 3, strides=1, padding='valid', activation=None, kernel_initializer='he_normal')(convnet)
+	convnet = MaxPooling2D(pool_size=(2, 2), strides=2)(convnet)
 
-	conv4_flatten = tf.reshape(conv4, [-1, 9*9*200])
-	dense1 = Dense(320, activation='relu')(conv4_flatten)
-	dense1 = Dropout(dropout_prob)(dense1)
+	convnet = tf.reshape(convnet, [-1, 9*9*200])
+	convnet = Dense(320, activation='relu')(convnet)
+	convnet = Dropout(dropout_prob)(convnet)
 
-	dense2 = Dense(320, activation='relu')(dense1)
-	dense2 = Dropout(dropout_prob)(dense2)
+	convnet = Dense(320, activation='relu')(convnet)
+	convnet = Dropout(dropout_prob)(convnet)
 
-	preds = Dense(n_classes, activation='linear')(dense2)
+	preds = Dense(n_classes, activation='linear')(convnet)
 	preds = Activation('softmax')(preds)
-	pred_class = tf.argmax(preds, axis=1)
 
 	sess.run(tf.global_variables_initializer())
 
@@ -137,47 +131,49 @@ def patch_based_cnn_model(sess, dropout_prob=0.5, l_rate=0.5, n_classes=2):
 	train_step = tf.train.GradientDescentOptimizer(l_rate).minimize(loss)
 
 	# Accurace metric
-	acc_value = tf.reduce_mean(accuracy(labels, preds))
+	accuracy_metric = tf.reduce_mean(accuracy(labels, preds))
 
-	return [preds, pred_class, loss, img, labels, train_step]
+	return [preds, accuracy_metric, img, labels, train_step]
 
 
-def train(sess, data_path, img, labels, train_step, n_epochs=2):
-	for epoch in range(10):
-		train_data_path = os.path.join(data_path, "train")
-		batch_list = os.listdir(train_data_path)
-		for batch in batch_list:
-			patches_file = os.path.join(train_data_path, batch, "patches.npy")
-			labels_file = os.path.join(train_data_path, batch, "label.npy")
+def train(sess, data_path, img, labels, train_step, n_epochs=1):
+	train_data_path = os.path.join(data_path, "train")
+	batch_list = os.listdir(train_data_path)
+	for epoch in range(n_epochs):
+		for batch_number in range(len(batch_list)):
+			patches_file = os.path.join(train_data_path, "batch_{}".format(batch_number+1), "patches.npy")
+			labels_file = os.path.join(train_data_path, "batch_{}".format(batch_number+1), "label.npy")
 
 			source_patches = np.load(patches_file)
 			source_labels = np.load(labels_file)
 
-			print("Patches' shape :", source_patches.shape)
-			print("Labels' shape :", source_labels.shape)
+			# print("Patches' shape :", source_patches.shape)
+			# print("Labels' shape :", source_labels.shape)
 
 			sess.run(train_step, feed_dict={img: source_patches,											
 											labels: source_labels,
 											K.learning_phase(): 1})
 
-def validate(sess, data_path, img, labels, preds):
+			# print("Batch : " +  "{}".format(batch_number+1) + " running........")
+		print("Epoch : " + str(epoch+1) + " completed!!")
+
+def validate(sess, accuracy_metric, data_path, img, labels):							#FIXME
 	val_data_path = os.path.join(data_path, "val")
-	acc_value = tf.reduce_sun(accuracy(labels, preds))
-  	
-  	total_patches = 0
-	for batch in val_batch_dirlist:
-		patches_file = os.path.join(val_data_path, batch_dir, "patches.npy")
-		labels_file = os.path.join(val_data_path, batch_dir, "label.npy")
+  	val_batch_dirlist = os.listdir(val_data_path)
+  	acc = 0
+	for batch_dirname in val_batch_dirlist:
+		patches_file = os.path.join(val_data_path, batch_dirname, "patches.npy")
+		labels_file = os.path.join(val_data_path, batch_dirname, "label.npy")
 
 		patches = np.load(patches_file)
 		patch_labels = np.load(labels_file)
 
-		accuracy += sess.run(acc_value, feed_dict={img: patches,
-	               		               		      labels: patch_labels,
-	                    	                	  K.learning_phase(): 0})
-		total_patches += patches.shape[0]
-	
-	print("The accuracy of the model is :", accuracy/total_patches)
+		acc += sess.run(accuracy_metric, feed_dict={  img: patches,
+		               		               		      labels: patch_labels,
+		                    	                	  K.learning_phase(): 0})
+	print("Accuracy list:")
+	print(acc)
+	print("The accuracy of the model is :", acc/len(val_batch_dirlist))					# Assuming every batch of same size
 
 
 ##################################################################
@@ -193,7 +189,15 @@ def load_patches_image_wise(cent_patches_dir, img_wise_patches_path, n_classes=2
 	"""
 
 	one_hot_vec = np.zeros(shape=(1, n_classes))
+	train_img_wise_patches_path = os.path.join(img_wise_patches_path, "train")
+	test_img_wise_patches_path = os.path.join(img_wise_patches_path, "test") 
+	val_img_wise_patches_path = os.path.join(img_wise_patches_path, "val")
 
+	# Ensures the dir presence and is empty
+	remove_and_create_dir(img_wise_patches_path)
+	remove_and_create_dir(train_img_wise_patches_path)
+	remove_and_create_dir(test_img_wise_patches_path)
+	remove_and_create_dir(val_img_wise_patches_path)
 
 	for i in range(n_classes):																	# iterated over label 1 and 0
 		# Load train, test and val patient ids list
@@ -268,14 +272,22 @@ def load_patches_image_wise(cent_patches_dir, img_wise_patches_path, n_classes=2
 	print("Patches Extraction Completed!!")
 
 
-def init_data_load(img_wise_patches_path, dest_data_path, batch_size=128):		# dest = destination
+def init_data_load(img_wise_patches_path, dest_data_path, batch_size=128, val_test_batch_size=1500):		# dest = destination
 	data_split = ['train', 'test', 'val']
 	delete_mask = list(range(batch_size))
-	for split in data_split:													# iterating over every split
+
+	# Esure the dir presenec for data storage
+	remove_and_create_dir(dest_data_path)
+
+	for split in data_split:																# iterating over every split
 		batch_number = 1
 
 		split_img_wise_patches_path = os.path.join(img_wise_patches_path, split)
 		split_data_path = os.path.join(dest_data_path, split)
+
+		# Checks if the dir is present and ensures it is empty for the new data being pumped in
+		remove_and_create_dir(split_data_path)
+
 		img_list = os.listdir(split_img_wise_patches_path)
 
 		patches = np.zeros((1,101,101,3))
@@ -283,6 +295,11 @@ def init_data_load(img_wise_patches_path, dest_data_path, batch_size=128):		# de
 
 		labels = np.zeros((1,2))
 		labels = np.delete(labels, [0], axis=0)
+		
+		if split is 'train':
+			split_batch_size = batch_size
+		else:
+			split_batch_size = val_test_batch_size
 
 		for img_name in img_list:
 			source_label_file = os.path.join(split_img_wise_patches_path, img_name, "label.npy")
@@ -296,35 +313,37 @@ def init_data_load(img_wise_patches_path, dest_data_path, batch_size=128):		# de
 				batch_dir = os.path.join(split_data_path, "batch_{}".format(batch_number))
 				dest_patches_file = os.path.join(batch_dir, "patches.npy")
 				dest_label_file = os.path.join(batch_dir, "label.npy")
-				print(patches.shape)
+				# print(patches.shape)
 
-				if patches.shape[0] >= batch_size:
+				if patches.shape[0] >= split_batch_size:
 					if not os.path.exists(batch_dir):
 						os.mkdir(batch_dir)
 
-					np.save(dest_patches_file, patches[0:batch_size])
-					np.save(dest_label_file, labels[0:batch_size])
+					np.save(dest_patches_file, patches[0:split_batch_size])
+					np.save(dest_label_file, labels[0:split_batch_size])
 
 					patches = np.delete(patches, delete_mask, axis=0)
 					labels = np.delete(labels, delete_mask, axis=0)
 				else:
 					if img_list[-1] is img_name:
-						os.mkdir(batch_dir)
+						if not os.path.exists(batch_dir):
+							os.mkdir(batch_dir)
 
 						np.save(dest_patches_file, patches)
 						np.save(dest_label_file, labels)						
 					break
 
+				print("{} batch {} completed".format(split, batch_number))
 				batch_number += 1
 
-def generate_predicted_maps(sess, preds, img_wise_patches_path, img=None):
+
+def generate_predicted_maps(sess, preds, img_wise_patches_path, img, max_patches_per_prediction=1500):
 	train_img_wise_patches_path = os.path.join(img_wise_patches_path, "train")
 	img_dirname_list = os.listdir(train_img_wise_patches_path)
 	label_0_file = os.path.join(img_wise_patches_path, "class_wise_probab_maps", "label_0.npy")
 	label_1_file = os.path.join(img_wise_patches_path, "class_wise_probab_maps", "label_1.npy")
 	
-	label_0_probab = []
-	label_1_probab = []
+	label_probab = [1, 2]
 
 	for img_dirname in img_dirname_list:
 		patches_dir = os.path.join(train_img_wise_patches_path, img_dirname)
@@ -332,30 +351,37 @@ def generate_predicted_maps(sess, preds, img_wise_patches_path, img=None):
 		probab_file = os.path.join(patches_dir, "probability_map.npy")
 		patches = np.load(patches_file)
 		img_label = int(img_dirname.split("_")[-1])
-		predicted_map_array = sess.run(preds, feed_dict={	img: patches,
+
+		predicted_map_array = np.zeros((1, 2))
+		predicted_map_array = np.delete(predicted_map_array, [0], axis=0)
+
+		while True:
+			if patches.shape[0] >= max_patches_per_prediction:
+				prediction = sess.run(preds, feed_dict={	img: patches[0:max_patches_per_prediction],
+																	K.learning_phase(): 0})
+				predicted_map_array = np.concatenate((predicted_map_array, prediction))
+				patches = np.delete(patches, list(range(max_patches_per_prediction)), axis=0)
+
+			else:
+				prediction = sess.run(preds, feed_dict={	img: patches,
 															K.learning_phase(): 0})
-		patches = None
-		predicted_maps_per_image = predicted_map_array[:, img_label]
+				predicted_map_array = np.concatenate((predicted_map_array, prediction))
+				break
+
+		# Probability map corresponding to the bag's label
+		predicted_map_array = predicted_map_array[:, img_label]
 		
-		if type(label_0_probab) is np.ndarray:
-			label_0_probab = np.concatenate((label_0_probab, predicted_maps_per_image))
+		if type(label_probab[img_label]) is np.ndarray:
+			label_probab[img_label] = np.concatenate((label_probab[img_label], predicted_map_array))
 		else:
-			 label_0_probab = predicted_maps_per_image
+			label_probab[img_label] = predicted_map_array
 
-		if type(label_1_probab) is np.ndarray:
-			label_1_probab = np.concatenate((label_1_probab, predicted_maps_per_image))
-		else:
-			 label_1_probab = predicted_maps_per_image
+		np.save(probab_file, predicted_map_array)
 
-		np.save(probab_file, predicted_maps_per_image)
-		
-		predicted_map_array = None
-		predicted_maps_per_image = None
+		print("Generated maps for : " + img_dirname + " " + str(img_dirname_list.index(img_dirname)+1))
 
-		# print("Generated maps for :", img_dirname)
-
-	np.save(label_1_file, label_1_probab)												# Saves the probab_maps classwise for further processing
-	np.save(label_0_file, label_0_probab)
+	np.save(label_1_file, label_probab[1])												# Saves the probab_maps classwise for further processing
+	np.save(label_0_file, label_probab[0])
 
 
 def E_step(img_wise_patches, data_path, batch_size=128, img_lvl_pctl=30, class_lvl_pctl=30, n_classes=2):
@@ -369,6 +395,9 @@ def E_step(img_wise_patches, data_path, batch_size=128, img_lvl_pctl=30, class_l
 	train_img_wise_patches_path = os.path.join(img_wise_patches, "train")
 	train_data_path = os.path.join(data_path, "train")
 	img_dirname_list = os.listdir(train_img_wise_patches_path)
+	
+	# Only for dir that have are meant to be updated regularly
+	remove_and_create_dir(train_data_path)
 
 	# For class lvl thresh
 	label_0_file = os.path.join(img_wise_patches_path, "class_wise_probab_maps", "label_0.npy")
@@ -397,10 +426,11 @@ def E_step(img_wise_patches, data_path, batch_size=128, img_lvl_pctl=30, class_l
 		source_labels = np.load(source_label_file)
 		source_coords = np.load(source_coord_file)
 		source_probab_maps = np.load(source_probab_file)
-		# print("Patches :", source_patches.shape)
-		# print("labels :", source_labels.shape)
-		# print("coords :", source_coords.shape)
-		# print("probab_maps :", source_probab_maps.shape)
+		print("E-step initiated for {}".format(img_dirname))
+		print("Initial Shape of patches :", source_patches.shape)
+		print("labels :", source_labels.shape)
+		print("coords :", source_coords.shape)
+		print("probab_maps :", source_probab_maps.shape)
 
 		for patch_index in range(source_patches.shape[0]):										# Iterating over the patches
 			center_coord = list(source_coords[patch_index])
@@ -411,10 +441,11 @@ def E_step(img_wise_patches, data_path, batch_size=128, img_lvl_pctl=30, class_l
 			# print(orig_patch_probab.shape)
 			reconstructed_probab_map[center_coord[0]-50: center_coord[0]+51, center_coord[1]-50:center_coord[1]+51] = \
 					np.maximum(orig_patch_probab, new_patch_prob)
+		print("Reconstruction done successfully!!")
 
 		img_lvl_thresh = np.percentile(source_probab_maps, img_lvl_pctl, axis=0)
-		# print("class_lvl_thresh :", class_lvl_thresh)
-		# print("img_lvl_thresh :", img_lvl_thresh)
+		print("class_lvl_thresh :", class_lvl_thresh)
+		print("img_lvl_thresh :", img_lvl_thresh)
 		# print(labels.shape)
 		threshold = min(img_lvl_thresh, class_lvl_thresh[np.argmax(source_labels[0,:])])
 		discriminative_mask = (reconstructed_probab_map>threshold) | (reconstructed_probab_map==threshold)
@@ -428,8 +459,11 @@ def E_step(img_wise_patches, data_path, batch_size=128, img_lvl_pctl=30, class_l
 
 				patches = np.concatenate((patches, patch))
 				labels = np.concatenate((labels, label))
+		
+		print("Final shape of patches :", patches.shape)
+		print("Updating training_data in batches now")
 
-		while(1):
+		while True:
 			batch_dir = os.path.join(train_data_path, "batch_{}".format(batch_number))
 			dest_patches_file = os.path.join(batch_dir, "patches.npy")
 			dest_label_file = os.path.join(batch_dir, "label.npy")
@@ -446,7 +480,8 @@ def E_step(img_wise_patches, data_path, batch_size=128, img_lvl_pctl=30, class_l
 				labels = np.delete(labels, delete_mask, axis=0)
 			else:
 				if img_dirname_list[-1] is img_dirname:
-					os.mkdir(batch_dir)
+					if not os.path.exists(batch_dir):
+						os.mkdir(batch_dir)
 
 					np.save(dest_patches_file, patches)
 					np.save(dest_label_file, labels)						
@@ -455,10 +490,15 @@ def E_step(img_wise_patches, data_path, batch_size=128, img_lvl_pctl=30, class_l
 			batch_number += 1
 
 
-
 #################################################################
 # -------------------- Other Helper functions ------------------#
 #################################################################
+def remove_and_create_dir(dir_path):
+	if os.path.exists(dir_path):
+		shutil.rmtree(dir_path)
+
+	os.mkdir(dir_path)
+
 def load_patch(img_path):
 	return cv2.imread(img_path)
 
