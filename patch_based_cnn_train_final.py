@@ -59,8 +59,7 @@ def main():
 	for itr in range(n_iter-1):
 		# E-step
 		generate_predicted_maps(sess, img_wise_patches_path)
-
-		E_step(img_wise_patches_path, img_lvl_pctl, class_lvl_pctl)									#TODO
+		E_step(img_wise_patches_path, data_path)													#TODO
 
 		# M-Step
 		train(sess, data_path)
@@ -151,8 +150,6 @@ def load_patches_image_wise(cent_patches_dir, img_wise_patches_path, n_classes=2
 
 	"""
 
-	# img_wise_patches = []
-	# init_train_data = [1, 2]																	# Initialised for a check as a list of int
 	one_hot_vec = np.zeros(shape=(1, n_classes))
 
 
@@ -227,20 +224,6 @@ def load_patches_image_wise(cent_patches_dir, img_wise_patches_path, n_classes=2
 
 			print("Completed for patient :", patient_id)
 
-				# if type(init_train_data[0]) is np.ndarray:
-				# 	init_train_data[0] = np.concatenate((init_train_data[0], patch))
-				# 	init_train_data[1] = np.concatenate((init_train_data[1], one_hot_vec))
-				# else:
-				# 	init_train_data[0] = patch
-				# 	init_train_data[1] = one_hot_vec
-
-		# img_wise_patches += [labeled_img_wise_patches,]
-
-	# print(len(img_wise_patches[0]))
-	# print(init_train_data[0].shape)
-	# print(init_train_data[1].shape)
-
-	# return [img_wise_patches, init_train_data]
 	print("Patches Extraction Completed!!")
 
 def init_data_load(img_wise_patches_path, dest_data_path, batch_size=128):		# dest = destination
@@ -295,7 +278,12 @@ def init_data_load(img_wise_patches_path, dest_data_path, batch_size=128):		# de
 def generate_predicted_maps(sess, img_wise_patches_path):
 	train_img_wise_patches_path = os.path.join(img_wise_patches, "train")
 	img_dirname_list = os.listdir(train_img_wise_patches_path)
+	label_0_file = os.path.join(img_wise_patches_path, "class_wise_probab_wise", "label_0.npy")
+	label_1_file = os.path.join(img_wise_patches_path, "class_wise_probab_wise", "label_1.npy")
 	
+	label_0_probab = []
+	label_1_probab = []
+
 	for img_dirname in img_dirname_list:
 		patches_dir = os.path.join(train_img_wise_patches_path, img_dirname)
 		patches_file = os.path.join(patches_dir, "patches.npy")
@@ -305,57 +293,107 @@ def generate_predicted_maps(sess, img_wise_patches_path):
 		predicted_map_array = sess.run(preds, feed_dict={	img: patches,
 												   			K.learning_phase(): 0})
 		predicted_maps_per_image = predicted_map_array[:, img_label]
+		
+		if type(label_0_probab) is np.ndarray:
+			label_0_probab = np.concatenate((label_0_probab, predicted_maps_per_image))
+		else:
+			 label_0_probab = predicted_maps_per_image
+
+		if type(label_1_probab) is np.ndarray:
+			label_1_probab = np.concatenate((label_1_probab, predicted_maps_per_image))
+		else:
+			 label_1_probab = predicted_maps_per_image
+
 		np.save(probab_file, predicted_maps_per_image)
 
+	np.save(label_1_file, label_1_probab)												# Saves the probab_maps classwise for further processing
+	np.save(label_0_file, label_0_probab)
 
-def E_step(predicted_maps, img_wise_patches, img_lvl_pctl=30, class_lvl_pctl=30, n_classes=2):
+
+def E_step(img_wise_patches, data_path, batch_size=128, img_lvl_pctl=30, class_lvl_pctl=30, n_classes=2):
 	""" - Applies gaussian smoothing to the predicted probability maps
 		- Generates bit mask for acceptable()discriminative patches for the next M_step
 		- Returns:
 				Refined training data for the next step
 	"""
-	# new_train_data = [1, 2]															# Initialised for a check as a list of int
-	# one_hot_vec = np.zeros(shape=(1, n_classes))
+	train_img_wise_patches_path = os.path.join(img_wise_patches, "train")
+	train_data_path = os.path.join(data_path, "train")
+	img_dirname_list = os.listdir(train_img_wise_patches_path)
 
-	# for i in range(n_classes):																# Iterating over all the labels
-	# 	one_hot_vec[0,i] = 1
-		# class_prob_map = []
-	
-	for img_name in predicted_maps[i].keys():
-		if type(class_prob_map) is np.ndarray:
-			class_prob_map = np.concatenate((class_prob_map, predicted_maps[i][img_name]))
-		else:
-			class_prob_map = predicted_maps[i][img_name]
+	# For class lvl thresh
+	label_0_file = os.path.join(img_wise_patches_path, "class_wise_probab_wise", "label_0.npy")
+	label_1_file = os.path.join(img_wise_patches_path, "class_wise_probab_wise", "label_1.npy")
+	class_lvl_thresh = [np.percentile(label_0_probab_map, class_lvl_pctl, axis=0), np.percentile(label_1_probab_map, class_lvl_pctl, axis=0)]
 
-	for img_name in predicted_maps[i].keys():											# iterating over images
+	patches = np.zeros((1,101,101,3))
+	patches = np.delete(patches, [0], axis=0)
+
+	labels = np.zeros((1,2))
+	labels = np.delete(labels, [0], axis=0)
+
+	batch_number = 1
+
+	for img_dirname in img_dirname_list:											# iterating over images
 		reconstructed_probab_map = np.zeros([101,101])
+		
+		source_patches_file = os.path.join(train_img_wise_patches_path, img_dirname, "patches.npy")
+		source_label_file = os.path.join(train_img_wise_patches_path, img_dirname, "label.npy")
+		source_coord_file = os.path.join(train_img_wise_patches_path, img_dirname, "coord.npy")
+		source_probab_file = os.path.join(train_img_wise_patches_path, img_dirname, "probability_map.npy")
 
-		for j in range(len(patches[i][img_name]["coord"])):								# iterating over patches
-			center_coord = patches[i][img_name]["coord"][j]
-			probability = predicted_maps[i][img_name][j,i]
+		source_patches = np.load(source_patches_file)
+		source_labels = np.load(source_label_file)
+		source_coords = np.load(source_coord_file)
+		source_probab_maps = np.load(source_probab_file)
+
+		for patch_index in range(source_patches.shape[0]):										# Iterating over the patches
+			center_coord = list(source_coords[patch_index])
+			probability = source_probab_maps[patch_index]																# FIXME
 			orig_patch_probab = reconstructed_probab_map[center_coord[0]-50: center_coord[0]+50, center_coord[1]-50:center_coord[1]+50]
 			new_patch_prob = probability*np.GaussianKernel()
 			reconstructed_probab_map[center_coord[0]-50: center_coord[0]+50, center_coord[1]-50:center_coord[1]+50] = 
 					np.maximum(orig_patch, new_patch_prob)
 
-		img_lvl_thresh = np.percentile(predicted_maps[i][img_name][:,i], axis=0)
-		class_lvl_thresh = np.percentile(class_prob_map, axis=0)
+		img_lvl_thresh = np.percentile(probab_maps, axis=0)
 
-		threshold = min(img_lvl_thresh, class_lvl_thresh)
+		threshold = min(img_lvl_thresh, class_lvl_thresh[np.argmax(labels[0,:])])										# FIXME
 		discriminative_mask = (reconstructed_probab_map>threshold) | (reconstructed_probab_map==threshold)
 		
-		for j in range(len(patches[i][img_name]["coord"])):
-			coord = patches[i][img_name]["coord"][i]
-			if discriminative_mask[coord[0], coord[1]]:
-				patch = np.reshape(patches[i][img_name]["patches"][j], [1, 101, 101, 3])
-				if type(new_train_data[0]) is np.ndarray:
-					new_train_data[0] = np.concatenate((new_train_data[0], patch))
-					new_train_data[1] = np.concatenate((new_train_data[1], one_hot_vec))
-				else:
-					new_train_data[0] = patch
-					new_train_data[1] = one_hot_vec
 
-	# return new_train_data
+		for patch_index in range(source_patches.shape[0]):
+			coord = source_coord[patch_index]
+			if discriminative_mask[coord[0], coord[1]]:
+				patch = np.reshape(source_patches[patch_index], [1, 101, 101, 3])
+				label = np.reshape(source_labels[patch_index], [1, 2])
+
+				patches = np.concatenate((patches, patch))
+				labels = np.concatenate((labels, label))
+
+		while(1):
+			batch_dir = os.path.join(train_data_path, "batch_{}".format(batch_number))
+			dest_patches_file = os.path.join(batch_dir, "patches.npy")
+			dest_label_file = os.path.join(batch_dir, "label.npy")
+			print(patches.shape)
+
+			if patches.shape[0] >= batch_size:
+				if not os.path.exists(batch_dir):
+					os.mkdir(batch_dir)
+
+				np.save(dest_patches_file, patches[0:batch_size])
+				np.save(dest_label_file, labels[0:batch_size])
+
+				patches = np.delete(patches, delete_mask, axis=0)
+				labels = np.delete(labels, delete_mask, axis=0)
+			else:
+				if img_dirname_list[-1] is img_dirname:
+					os.mkdir(batch_dir)
+
+					np.save(dest_patches_file, patches)
+					np.save(dest_label_file, labels)						
+				break
+
+			batch_number += 1
+
 
 
 #################################################################
