@@ -49,26 +49,27 @@ def main():
 	#################### Initial M-step ######################## 
 	# Training and predictions of probability maps
 	preds, pred_class, loss, img, labels, train_step = patch_based_cnn_model(sess)
-	# train(sess, data_path, img=img, labels=labels, n_epochs=10)
+	train(sess, data_path, img, labels, train_step, n_epochs=10)
 	
-	for epoch in range(10):
-		train_data_path = os.path.join(data_path, "train")
-		batch_list = os.listdir(train_data_path)
-		for batch in batch_list:
-			patches_file = os.path.join(train_data_path, batch, "patches.npy")
-			labels_file = os.path.join(train_data_path, batch, "label.npy")
+	# for epoch in range(10):
+	# 	train_data_path = os.path.join(data_path, "train")
+	# 	batch_list = os.listdir(train_data_path)
+	# 	for batch in batch_list:
+	# 		patches_file = os.path.join(train_data_path, batch, "patches.npy")
+	# 		labels_file = os.path.join(train_data_path, batch, "label.npy")
 
-			source_patches = np.load(patches_file)
-			source_labels = np.load(labels_file)
+	# 		source_patches = np.load(patches_file)
+	# 		source_labels = np.load(labels_file)
 
-			print("Patches' shape :", source_patches.shape)
-			print("Labels' shape :", source_labels.shape)
+	# 		print("Patches' shape :", source_patches.shape)
+	# 		print("Labels' shape :", source_labels.shape)
 
-			sess.run(train_step, feed_dict={img: source_patches,											
-											labels: source_labels,
-											K.learning_phase(): 1})		
-	# Validation part 																				#TODO
+	# 		sess.run(train_step, feed_dict={img: source_patches,											
+	# 										labels: source_labels,
+	# 										K.learning_phase(): 1})		
 
+	# Validation part
+	validate(sess, data_path, img, labels, preds)
 
 	#################### 2nd Iteration Onwards ########################
 	train_img_wise_patches_path = os.path.join(img_wise_patches_path, "train")
@@ -78,9 +79,10 @@ def main():
 		E_step(img_wise_patches_path, data_path)
 
 		# M-Step
-		train(sess, data_path, train_step=train_step, img=img, labels=labels)
+		train(sess, data_path, img, labels, train_step)
 
-		# Validation part 																			#TODO
+		# Validation part
+		validate(sess, data_path, img, labels, preds)
 
 	# saving the model
 	saver = tf.train.Saver()
@@ -142,8 +144,8 @@ def patch_based_cnn_model(sess, dropout_prob=0.5, l_rate=0.5, n_classes=2):
 	return [preds, pred_class, loss, img, labels, train_step]
 
 
-def train(sess, data_path, train_step=None, img=None, labels=None, n_epochs=2):
-	for epoch in range(n_epochs):
+def train(sess, data_path, img, labels, train_step, n_epochs=2):
+	for epoch in range(10):
 		train_data_path = os.path.join(data_path, "train")
 		batch_list = os.listdir(train_data_path)
 		for batch in batch_list:
@@ -159,6 +161,25 @@ def train(sess, data_path, train_step=None, img=None, labels=None, n_epochs=2):
 			sess.run(train_step, feed_dict={img: source_patches,											
 											labels: source_labels,
 											K.learning_phase(): 1})
+
+def validate(sess, data_path, img, labels, preds):
+	val_data_path = os.path.join(data_path, "val")
+	acc_value = tf.reduce_sun(accuracy(labels, preds))
+  	
+  	total_patches = 0
+	for batch in val_batch_dirlist:
+		patches_file = os.path.join(val_data_path, batch_dir, "patches.npy")
+		labels_file = os.path.join(val_data_path, batch_dir, "label.npy")
+
+		patches = np.load(patches_file)
+		patch_labels = np.load(labels_file)
+
+		accuracy += sess.run(acc_value, feed_dict={img: patches,
+	               		               		      labels: patch_labels,
+	                    	                	  K.learning_phase(): 0})
+		total_patches += patches.shape[0]
+	
+	print("The accuracy of the model is :", accuracy/total_patches)
 
 
 ##################################################################
