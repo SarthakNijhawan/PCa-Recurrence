@@ -157,7 +157,7 @@ def train(sess, data_path, img, labels, train_step, n_epochs=1):
 			# print("Batch : " +  "{}".format(batch_number+1) + " running........")
 		print("Epoch : " + str(epoch+1) + " completed!!")
 
-def validate(sess, accuracy_metric, data_path, img, labels):					#FIXME
+def validate(sess, accuracy_metric, data_path, img, labels):							#FIXME
 	val_data_path = os.path.join(data_path, "val")
   	val_batch_dirlist = os.listdir(val_data_path)
   	acc = 0
@@ -279,7 +279,7 @@ def init_data_load(img_wise_patches_path, dest_data_path, batch_size=128, val_te
 	# Esure the dir presenec for data storage
 	remove_and_create_dir(dest_data_path)
 
-	for split in data_split:													# iterating over every split
+	for split in data_split:																# iterating over every split
 		batch_number = 1
 
 		split_img_wise_patches_path = os.path.join(img_wise_patches_path, split)
@@ -488,7 +488,6 @@ def E_step(img_wise_patches, data_path, batch_size=128, img_lvl_pctl=30, class_l
 				break
 
 			batch_number += 1
-
 
 
 #################################################################
