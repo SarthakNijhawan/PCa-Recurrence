@@ -8,96 +8,109 @@ import cv2
 import shutil
 
 from keras.layers import Dense, Dropout, Conv2D, MaxPooling2D, Activation
-from keras.metrics import categorical_accuracy as accuracy
-from keras.objectives import categorical_crossentropy
+from keras.models import Model
 from keras import backend as K
 
 
 # --------------------- Global Variables -------------------------
-# model_path = './models/patch_based_cnn_model'
-model_path = './models'
-patient_wise_patches_path = './tmp/anno_cent'
-img_wise_patches_path = './tmp/img_wise_patches'
-data_path = './tmp/data'
+model_path = './saved_models'
+patient_wise_patches_path = './anno_cent'
+data_path = './data_dump'
+tmp_train_data_path = './train_tmp/'									# tmp dir for training. will be deleted b4 the program closes
+val_data_path = data_path + '/valid'
 
 n_iter = 2
+batch_size = 128
+n_classes = 2
+data_augmentation = True
 
-# @todo : code is yet to be made more efficient
-# @todo : accuracy
-# @todo : 3 classes rather than 2 classes
-# @todo : Saving and loading the model every iteration
+# input image dimensions
+img_rows, img_cols = 101,101
+# The patch images are RGB.
+img_channels = 3
+
 # @todo : Description
 
 
-"""
-	patches[0][img_name]={	"patches" : All the patches as stacked numpy arrays 
-							"coord"	  : Center coords of each patch}	
-"""
-
 # --------------------- Main Function ----------------------------
 def main():
-	""" Trains the model on EM algo and saves it to the given model path """
 	# Default Session for Keras
 	sess = tf.Session()
 	K.set_session(sess)
 
-	# Sorts all the patches into image_wise directories
-	# print("Loading img_wise patches now : ")
-	# load_patches_image_wise(patient_wise_patches_path, img_wise_patches_path)
-	# print("Loading patches imgwise completed!!")
+	# Maintains a copy of whole data for further reference
+	shutil.copytree(os.path.join(data_path, "train"), tmp_train_data_path)
 
-	# # Prepares training data for first iteration in the training direct batch wise
-	print("init data being loaded now :")
-	init_data_load(img_wise_patches_path, data_path, val_test_batch_size=1500)
-	print("init data loaded!!!")
+	# Defining a model
+	model = patch_based_cnn_model()
+
+	# This will do preprocessing and realtime data augmentation:
+	datagen = ImageDataGenerator(rescale=1.0/255.)
+	datagen_augmented = ImageDataGenerator(featurewise_center=False,
+	    samplewise_center=True,
+	    featurewise_std_normalization=False,
+	    samplewise_std_normalization=True,
+	    zca_whitening=False,
+	    zca_epsilon=1e-6,
+	    rotation_range=90,
+	    width_shift_range=0.2,
+	    height_shift_range=0.2,
+	    shear_range=0.2,
+	    zoom_range=0.2,
+	    channel_shift_range=0.2,
+	    fill_mode='nearest',
+	    cval=0.,
+	    horizontal_flip=True,
+	    vertical_flip=True,
+	    rescale=1.0/255.,
+	    preprocessing_function=None)
+	train_generator_augmented = datagen_augmented.flow_from_directory(
+	    tmp_train_data_path,
+	    target_size=(img_cols, img_rows),
+	    batch_size=batch_size,
+	    class_mode='categorical')
+	validation_generator = datagen.flow_from_directory(
+	    tmp_train_data_path,
+	    target_size=(img_cols, img_rows),
+	    batch_size=batch_size,
+	    class_mode='categorical')
 
 	#################### Initial M-step ######################## 
 	# Training and predictions of probability maps
-	preds, accuracy_metric, img, labels, train_step = patch_based_cnn_model(sess)
-	train(sess, data_path, img, labels, train_step, n_epochs=1)												#FIXME
+	train(model, train_generator_augmented, validation_generator)									#TODO
 	print("First iteration of EM algo over")
 
-	# Validation part
-	validate(sess, accuracy_metric, data_path, img, labels)
-
 	#################### 2nd Iteration Onwards ########################
-	train_img_wise_patches_path = os.path.join(img_wise_patches_path, "train")
 	for itr in range(n_iter-1):
 		# E-step
-		generate_predicted_maps(sess, preds, img_wise_patches_path, img=img)
+		generate_predicted_maps(preds, data_path, img=img)											#TODO
 		print("Probab maps predicted!!")
 
-		E_step(img_wise_patches_path, data_path)
+		E_step(data_path, tmp_train_data_path)														#TODO
 		print("{}th iteration's E-step performed!!".format(itr+1))
 		
 		# M-Step
-		train(sess, data_path, img, labels, train_step)
+		train(model, train_generator_augmented, validation_generator)
 		print("{}th iteration's M-step performed!!".format(itr+1))
-
-		# Validation part
-		validate(sess, accuracy_metric, data_path, img, labels)
 
 	# saving the model
 	saver = tf.train.Saver()
 	saver.save(sess, model_path)
 
 	# EM-Algo completed
+	shutil.rmtree(tmp_train_data_path)
 	sess.close()
-	print("Training Completed!!")
-
+	print("Training Completed Successfully !!")
 
 
 ##################################################################
 #---------------------Model and its functions -------------------#
 ##################################################################
-def patch_based_cnn_model(sess, dropout_prob=0.5, l_rate=0.5, n_classes=2):
-
-	# Placeholders
-	img = tf.placeholder(tf.float32, shape=(None, 101, 101, 3))
-	labels = tf.placeholder(tf.float32, shape=(None, 2))
+def patch_based_cnn_model(dropout_prob=0.5, l_rate=0.5, n_classes=2, img_rows=101, img_cols=101):
 
 	# Layers
-	convnet = Conv2D(80, 6, strides=1, padding='valid', activation=None, kernel_initializer='he_normal')(img)
+	input_img=Input(shape=(img_rows,img_cols,3))
+	convnet = Conv2D(80, 6, strides=1, padding='valid', activation=None, kernel_initializer='he_normal')(input_img)
 	convnet = tf.nn.local_response_normalization(convnet)
 	convnet = Activation('relu')(convnet)
 	convnet = MaxPooling2D(pool_size=(2, 2), strides=2)(convnet)
@@ -112,232 +125,41 @@ def patch_based_cnn_model(sess, dropout_prob=0.5, l_rate=0.5, n_classes=2):
 	convnet = Conv2D(200, 3, strides=1, padding='valid', activation=None, kernel_initializer='he_normal')(convnet)
 	convnet = MaxPooling2D(pool_size=(2, 2), strides=2)(convnet)
 
-	convnet = tf.reshape(convnet, [-1, 9*9*200])
+	flatten=Flatten()(convnet)
 	convnet = Dense(320, activation='relu')(convnet)
 	convnet = Dropout(dropout_prob)(convnet)
 
 	convnet = Dense(320, activation='relu')(convnet)
 	convnet = Dropout(dropout_prob)(convnet)
 
-	preds = Dense(n_classes, activation='linear')(convnet)
-	preds = Activation('softmax')(preds)
+	preds = Dense(n_classes, activation='softmax')(convnet)
 
-	sess.run(tf.global_variables_initializer())
+	model=Model(input=[input_img],output=[prediction])
 
-	# loss funtion
-	loss = tf.reduce_mean(categorical_crossentropy(labels, preds))
+	# checkpointer = ModelCheckpoint(filepath='./saved_models/weights/patch_based_cnn_101.hdf5', monitor='val_acc',verbose=1, save_best_only=True)
+	# rmsprop=RMSprop(lr=0.0001, rho=0.9, epsilon=1e-08, decay=0.0)
+	sgd = SGD(lr=0.001, momentum=0.0, decay=0.0, nesterov=True)
+	# adam=Adam(lr=0.001, beta_1=0.9, beta_2=0.999, epsilon=1e-08, decay=0.0)
+	model.compile(loss='categorical_crossentropy',
+	              optimizer=sgd,
+	              metrics=['accuracy'])
 
-	# Training operation
-	train_step = tf.train.GradientDescentOptimizer(l_rate).minimize(loss)
+	return model
 
-	# Accurace metric
-	accuracy_metric = tf.reduce_mean(accuracy(labels, preds))
-
-	return [preds, accuracy_metric, img, labels, train_step]
-
-
-def train(sess, data_path, img, labels, train_step, n_epochs=1):
-	train_data_path = os.path.join(data_path, "train")
-	batch_list = os.listdir(train_data_path)
-	for epoch in range(n_epochs):
-		for batch_number in range(len(batch_list)):
-			patches_file = os.path.join(train_data_path, "batch_{}".format(batch_number+1), "patches.npy")
-			labels_file = os.path.join(train_data_path, "batch_{}".format(batch_number+1), "label.npy")
-
-			source_patches = np.load(patches_file)
-			source_labels = np.load(labels_file)
-
-			# print("Patches' shape :", source_patches.shape)
-			# print("Labels' shape :", source_labels.shape)
-
-			sess.run(train_step, feed_dict={img: source_patches,											
-											labels: source_labels,
-											K.learning_phase(): 1})
-
-			# print("Batch : " +  "{}".format(batch_number+1) + " running........")
-		print("Epoch : " + str(epoch+1) + " completed!!")
-
-def validate(sess, accuracy_metric, data_path, img, labels):							#FIXME
-	val_data_path = os.path.join(data_path, "val")
-  	val_batch_dirlist = os.listdir(val_data_path)
-  	acc = 0
-	for batch_dirname in val_batch_dirlist:
-		patches_file = os.path.join(val_data_path, batch_dirname, "patches.npy")
-		labels_file = os.path.join(val_data_path, batch_dirname, "label.npy")
-
-		patches = np.load(patches_file)
-		patch_labels = np.load(labels_file)
-
-		acc += sess.run(accuracy_metric, feed_dict={  img: patches,
-		               		               		      labels: patch_labels,
-		                    	                	  K.learning_phase(): 0})
-	print("Accuracy list:")
-	print(acc)
-	print("The accuracy of the model is :", acc/len(val_batch_dirlist))					# Assuming every batch of same size
-
+def train_and_validate(model, training_generator, validation_generator, n_epochs=2):
+	model.fit_generator(
+    training_generator,
+    steps_per_epoch=train_samples // batch_size,
+    epochs=n_epochs,
+    verbose=1,
+    validation_data=validation_generator,
+	validation_steps=val_samples// batch_size)
+	# callbacks=[checkpointer,csv_logger])
 
 ##################################################################
 #--------------------- EM Algo Helper functions -------------------#
 ##################################################################
-def load_patches_image_wise(cent_patches_dir, img_wise_patches_path, n_classes=2):
-	""" - Loads all the images and splits them into patches for prediction
-		and updation of training data for every iteration in the applied
-		EM algo for training he model
-		- Returns:
-			All the patches arranged in a dict img_wise (will be required when reconstructin the probability map)
-
-	"""
-
-	one_hot_vec = np.zeros(shape=(1, n_classes))
-	train_img_wise_patches_path = os.path.join(img_wise_patches_path, "train")
-	test_img_wise_patches_path = os.path.join(img_wise_patches_path, "test") 
-	val_img_wise_patches_path = os.path.join(img_wise_patches_path, "val")
-
-	# Ensures the dir presence and is empty
-	remove_and_create_dir(img_wise_patches_path)
-	remove_and_create_dir(train_img_wise_patches_path)
-	remove_and_create_dir(test_img_wise_patches_path)
-	remove_and_create_dir(val_img_wise_patches_path)
-
-	for i in range(n_classes):																	# iterated over label 1 and 0
-		# Load train, test and val patient ids list
-		train_list = []
-		test_list = []
-		val_list = []
-
-		with open("train_{}.txt".format(i)) as myfile:
-			train_list = myfile.readlines()
-
-		with open("val_{}.txt".format(i)) as myfile:
-			val_list = myfile.readlines()
-
-		with open("test_{}.txt".format(i)) as myfile:
-			test_list = myfile.readlines()
-
-		one_hot_vec[0,i] = 1
-		labeled_patches_dir = os.path.join(cent_patches_dir, 'label_'+str(i))
-		patient_wise_patches_dirlist = os.listdir(labeled_patches_dir)
-		print("Starting for label ", i)
-		for patient_dirname in patient_wise_patches_dirlist:
-			patient_id = patient_dirname.split("_")[0]
-			patient_dir_path = os.path.join(labeled_patches_dir, patient_dirname)
-			patch_list = os.listdir(patient_dir_path)
-			img_wise_patches = {}
-			
-			if (patient_id + "\n") in train_list:
-				data_split = "train"
-			elif (patient_id + "\n") in test_list:
-				data_split = "test"
-			elif (patient_id + "\n") in val_list:
-				data_split = "val"
-			else:
-				continue
-
-			for patchname in patch_list:
-				patch_path = os.path.join(patient_dir_path, patchname)
-				
-				patch_name_split = patchname.split("_")											# 1000104570_999_913_PrognosisTMABlock3_F_4_5_H&E0.png
-				img_name = "_".join([patch_name_split[0],]+patch_name_split[3:]).split(".")[0]	# img_name = "1000104570_PrognosisTMABlock3_F_4_5_H&E0_%d".format(i)
-				img_name += "_{}".format(i)
-				patch_coord = np.array([[int(patch_name_split[1]), int(patch_name_split[2])]])	# patch_coord as numpy arrays of shape = (1,2)
-				
-				patch = load_patch(patch_path)
-				patch = np.reshape(patch, (1, 101, 101, 3))
-
-				if img_name in img_wise_patches.keys():
-					img_wise_patches[img_name]["patches"] = np.concatenate((img_wise_patches[img_name]["patches"], patch))
-					img_wise_patches[img_name]["coord"]  = np.concatenate((img_wise_patches[img_name]["coord"], patch_coord))
-					img_wise_patches[img_name]["label"] = np.concatenate((img_wise_patches[img_name]["label"], one_hot_vec))
-				else:
-					img_wise_patches[img_name] = {}
-					img_wise_patches[img_name]["label"] = one_hot_vec 
-					img_wise_patches[img_name]["patches"] = patch
-					img_wise_patches[img_name]["coord"] = patch_coord
-					img_wise_patches[img_name]["data_split"] = data_split
-			
-			for img_name in img_wise_patches.keys():
-				img_dir = os.path.join(img_wise_patches_path, img_wise_patches[img_name]["data_split"], img_name)
-				if not os.path.exists(img_dir):
-					os.mkdir(img_dir)
-					patches_file = os.path.join(img_dir, "patches")
-					label_file = os.path.join(img_dir, "label")
-					coord_file = os.path.join(img_dir, "coord")
-
-					np.save(patches_file, img_wise_patches[img_name]["patches"])
-					np.save(label_file, img_wise_patches[img_name]["label"])
-					np.save(coord_file, img_wise_patches[img_name]["coord"])
-
-			print("Completed for patient :", patient_id)
-
-	print("Patches Extraction Completed!!")
-
-
-def init_data_load(img_wise_patches_path, dest_data_path, batch_size=128, val_test_batch_size=1500):		# dest = destination
-	data_split = ['train', 'test', 'val']
-	delete_mask = list(range(batch_size))
-
-	# Esure the dir presenec for data storage
-	remove_and_create_dir(dest_data_path)
-
-	for split in data_split:																# iterating over every split
-		batch_number = 1
-
-		split_img_wise_patches_path = os.path.join(img_wise_patches_path, split)
-		split_data_path = os.path.join(dest_data_path, split)
-
-		# Checks if the dir is present and ensures it is empty for the new data being pumped in
-		remove_and_create_dir(split_data_path)
-
-		img_list = os.listdir(split_img_wise_patches_path)
-
-		patches = np.zeros((1,101,101,3))
-		patches = np.delete(patches, [0], axis=0)
-
-		labels = np.zeros((1,2))
-		labels = np.delete(labels, [0], axis=0)
-		
-		if split is 'train':
-			split_batch_size = batch_size
-		else:
-			split_batch_size = val_test_batch_size
-
-		for img_name in img_list:
-			source_label_file = os.path.join(split_img_wise_patches_path, img_name, "label.npy")
-			source_coord_file = os.path.join(split_img_wise_patches_path, img_name, "coord.npy")
-			source_patches_file = os.path.join(split_img_wise_patches_path, img_name, "patches.npy")
-			
-			patches = np.concatenate((patches, np.load(source_patches_file)))
-			labels = np.concatenate((labels, np.load(source_label_file)))
-
-			while(1):
-				batch_dir = os.path.join(split_data_path, "batch_{}".format(batch_number))
-				dest_patches_file = os.path.join(batch_dir, "patches.npy")
-				dest_label_file = os.path.join(batch_dir, "label.npy")
-				# print(patches.shape)
-
-				if patches.shape[0] >= split_batch_size:
-					if not os.path.exists(batch_dir):
-						os.mkdir(batch_dir)
-
-					np.save(dest_patches_file, patches[0:split_batch_size])
-					np.save(dest_label_file, labels[0:split_batch_size])
-
-					patches = np.delete(patches, delete_mask, axis=0)
-					labels = np.delete(labels, delete_mask, axis=0)
-				else:
-					if img_list[-1] is img_name:
-						if not os.path.exists(batch_dir):
-							os.mkdir(batch_dir)
-
-						np.save(dest_patches_file, patches)
-						np.save(dest_label_file, labels)						
-					break
-
-				print("{} batch {} completed".format(split, batch_number))
-				batch_number += 1
-
-
-def generate_predicted_maps(sess, preds, img_wise_patches_path, img, max_patches_per_prediction=1500):
+def generate_predicted_maps(model, train_data_path):
 	train_img_wise_patches_path = os.path.join(img_wise_patches_path, "train")
 	img_dirname_list = os.listdir(train_img_wise_patches_path)
 	label_0_file = os.path.join(img_wise_patches_path, "class_wise_probab_maps", "label_0.npy")
@@ -493,12 +315,6 @@ def E_step(img_wise_patches, data_path, batch_size=128, img_lvl_pctl=30, class_l
 #################################################################
 # -------------------- Other Helper functions ------------------#
 #################################################################
-def remove_and_create_dir(dir_path):
-	if os.path.exists(dir_path):
-		shutil.rmtree(dir_path)
-
-	os.mkdir(dir_path)
-
 def load_patch(img_path):
 	return cv2.imread(img_path)
 
