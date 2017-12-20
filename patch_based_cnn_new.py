@@ -1,3 +1,4 @@
+from __future__ import print_function
 import os
 os.environ["CUDA_VISIBLE_DEVICES"]="0"
 
@@ -6,21 +7,36 @@ import scipy.stats as st
 import tensorflow as tf
 import cv2
 import shutil
+import time
 
-from keras.layers import Dense, Dropout, Conv2D, MaxPooling2D, Activation
+from numpy.random import seed
+seed(1)
+from tensorflow import set_random_seed
+set_random_seed(1)
+from keras.preprocessing.image import ImageDataGenerator
+from keras.layers import Dense, Dropout, Conv2D, MaxPooling2D, Activation, Input, Flatten
 from keras.models import Model
+from keras.optimizers import Adam,SGD, RMSprop
 from keras import backend as K
 
 
 # --------------------- Global Variables -------------------------
-model_path = './saved_models'
-patient_wise_patches_path = './anno_cent'
-data_path = './data_dump'
-tmp_train_data_path = './train_tmp'									# tmp dir for training. will be deleted b4 the program closes
-val_data_path = data_path + '/valid'
-tmp_probab_path = './probab_maps_dump'
+# model_path = './saved_models'
+# patient_wise_patches_path = './anno_cent'
+# data_path = './data_dump'
+# tmp_train_data_path = './train_tmp'									# tmp dir for training. will be deleted b4 the program closes
+# val_data_path = data_path + '/valid'
+# tmp_probab_path = './probab_maps_dump'
 
-n_iter = 2
+model_path = './saved_models'
+patient_wise_patches_path = './tmp/anno_cent'
+data_path = './tmp/data_dump'
+tmp_train_data_path = './tmp/train_tmp'									# tmp dir for training. will be deleted b4 the program closes
+val_data_path = data_path + '/valid'
+tmp_probab_path = './tmp/probab_maps_dump_tmp'
+
+
+n_iter = 50
 batch_size = 128
 n_classes = 2
 data_augmentation = True
@@ -59,23 +75,29 @@ def main():
 
 	print("First iteration of EM algo over")
 
-	if n_iter > 2:
-		img_wise_indices, patch_wise_indices = load_indices(tmp_train_data_paths)
+	if n_iter > 1:
+		print("LOADING INDICES NOW ........")
+		start_time = time.time()
+		img_wise_indices, patch_wise_indices = load_indices(tmp_train_data_path)
+		print("--- %s seconds ---" % (time.time() - start_time))
 
 	#################### 2nd Iteration Onwards ########################
 	for itr in range(n_iter-1):
+		if os.path.exists(tmp_probab_path):
+			shutil.rmtree(tmp_probab_path)
 		os.mkdir(tmp_probab_path)
-		for i in range(n_classes):
+		for label in range(n_classes):
 			os.mkdir(os.path.join(tmp_probab_path, "label_"+str(label)))
 
 		# E-step
 		generate_predicted_maps(model, tmp_train_data_path, tmp_probab_path, img_wise_indices)		#TODO
 		print("Probab maps predicted!!")
+		raw_input('Halt')
 
 		E_step(tmp_train_data_path, tmp_probab_path, img_wise_indices, patch_wise_indices)			#TODO	
-		img_wise_indices, patch_wise_indices = load_indices(tmp_train_data_paths)
+		img_wise_indices, patch_wise_indices = load_indices(tmp_train_data_path)
 		print("{}th iteration's E-step performed!!".format(itr+1))
-		
+		raw_input('Halt')		
 		shutil.rmtree(tmp_probab_path)
 
 		# M-Step
@@ -117,7 +139,7 @@ def patch_based_cnn_model(dropout_prob=0.5, l_rate=0.5, n_classes=2, img_rows=10
 	convnet = Conv2D(200, 3, strides=1, padding='valid', activation=None, kernel_initializer='he_normal')(convnet)
 	convnet = MaxPooling2D(pool_size=(2, 2), strides=2)(convnet)
 
-	flatten=Flatten()(convnet)
+	convnet = Flatten()(convnet)
 	convnet = Dense(320, activation='relu')(convnet)
 	convnet = Dropout(dropout_prob)(convnet)
 
@@ -126,7 +148,7 @@ def patch_based_cnn_model(dropout_prob=0.5, l_rate=0.5, n_classes=2, img_rows=10
 
 	preds = Dense(n_classes, activation='softmax')(convnet)
 
-	model=Model(input=[input_img],output=[prediction])
+	model=Model(input=[input_img],output=[preds])
 
 	# checkpointer = ModelCheckpoint(filepath='./saved_models/weights/patch_based_cnn_101.hdf5', monitor='val_acc',verbose=1, save_best_only=True)
 	# rmsprop=RMSprop(lr=0.0001, rho=0.9, epsilon=1e-08, decay=0.0)
@@ -208,13 +230,15 @@ def load_indices(train_data_path, n_classes=2):
  				label_img_wise_indices[img_name] += [patch_index,]
 
  			label_patch_wise_indices[patch_name]={}
- 			label_patch_wise_indices[patch_name][index]=0
+ 			label_patch_wise_indices[patch_name]["index"]=patch_index
  			label_patch_wise_indices[patch_name][img_name]=img_name
  			label_patch_wise_indices[patch_name]["coord"]=[int(patch_split[1]), int(patch_split[2])]
- 		
-	img_wise_indices += [label_patch_wise_indices,]
-	patch_wise_indices += [label_patch_wise_indices,]
+	 		
+		img_wise_indices += [label_img_wise_indices,]
+		patch_wise_indices += [label_patch_wise_indices,]
 
+	print("Length of patch wise indices for label_0:", len(patch_wise_indices[0]),"!!!!")
+	print("Length of patch wise indices for label_1:", len(patch_wise_indices[1]),"!!!!")
 	return img_wise_indices, patch_wise_indices
 
 
@@ -228,25 +252,27 @@ def generate_predicted_maps(model, train_data_path, probab_path, img_wise_indice
 		class_probab_map = np.delete(class_probab_map, [0], axis=0)
 
 		for img_name in img_wise_indices[label].keys():
-			patches = np.zeros((1, 2))
+			patches = np.zeros((1, 101, 101, 3))
 			patches = np.delete(patches, [0], axis=0)
 			
 			for patch_index in img_wise_indices[label][img_name]:
 				patch_path = os.path.join(class_data_path, patch_list[patch_index])
 				patch = load_patch(patch_path)
-				patches = np.concatenate((patches, patch))
+				patches = np.concatenate((patches, np.expand_dims(patch, axis=0)))
 			
 			img_probab_map = model.predict(patches, batch_size=1024)
 			np.save(os.path.join(probab_path, "label_"+str(label), img_name+".npy"), img_probab_map[:,label])
 
 			class_probab_map = np.concatenate((class_probab_map, img_probab_map))
+			print("Predicted map completed for", img_name)
 
-		np.save(os.path.join(probab_path, "label_"+str(label)".npy"), class_probab_map)
+		np.save(os.path.join(probab_path, "label_"+str(label)+".npy"), class_probab_map)
+	print("PREDICTED ALL THE MAPS")
 
 def E_step(train_data_path, probab_path, img_wise_indices, patch_wise_indices, img_lvl_pctl=5, class_lvl_pctl=5, n_classes=2):
 
 	for label in range(n_classes):
-		class_probab_map = np.load(os.path.join(probab_path, "label_"+str(label)".npy"))
+		class_probab_map = np.load(os.path.join(probab_path, "label_"+str(label)+".npy"))
 		class_lvl_thresh = np.percentile(class_probab_map, class_lvl_pctl)
 
 		class_data_path = os.path.join(train_data_path, "label_"+str(label))
@@ -254,7 +280,10 @@ def E_step(train_data_path, probab_path, img_wise_indices, patch_wise_indices, i
 
 		for img_name in img_wise_indices[label].keys():
 			img_probab_map = np.load(os.path.join(probab_path, "label_"+str(label), img_name+".npy"))
-			img_lvl_thresh = np.percentile(img_probab_map, img_lvl_pctl, axis=0)
+			img_lvl_thresh = np.percentile(img_probab_map, img_lvl_pctl)
+			print("image probab_map shape:", img_probab_map.shape)
+			print("class probab map shape:", class_probab_map.shape)
+
 			reconstructed_probab_map = np.zeros([2000,2000])
 
 			for index in range(img_probab_map.shape[0]):
@@ -268,8 +297,8 @@ def E_step(train_data_path, probab_path, img_wise_indices, patch_wise_indices, i
 				new_patch_prob = probability*GaussianKernel()
 				reconstructed_probab_map[patch_cent_coord[0]-50: patch_cent_coord[0]+51, patch_cent_coord[1]-50:patch_cent_coord[1]+51] = \
 					np.maximum(orig_patch_probab, new_patch_prob)
-
-			print("Reconstruction done successfully!!")
+			print("IMAGE :", img_name)
+			# print("Reconstruction done successfully!!")
 			print("class_lvl_thresh :", class_lvl_thresh)
 			print("img_lvl_thresh :", img_lvl_thresh)
 
