@@ -36,7 +36,7 @@ val_data_path = data_path + '/valid'
 tmp_probab_path = './tmp/probab_maps_dump_tmp'
 
 
-n_iter = 50
+n_iter = 20
 batch_size = 128
 n_classes = 2
 data_augmentation = True
@@ -92,12 +92,12 @@ def main():
 		# E-step
 		generate_predicted_maps(model, tmp_train_data_path, tmp_probab_path, img_wise_indices)		#TODO
 		print("Probab maps predicted!!")
-		raw_input('Halt')
+		# raw_input('Halt')
 
 		E_step(tmp_train_data_path, tmp_probab_path, img_wise_indices, patch_wise_indices)			#TODO	
 		img_wise_indices, patch_wise_indices = load_indices(tmp_train_data_path)
 		print("{}th iteration's E-step performed!!".format(itr+1))
-		raw_input('Halt')		
+		# raw_input('Halt')		
 		shutil.rmtree(tmp_probab_path)
 
 		# M-Step
@@ -269,7 +269,7 @@ def generate_predicted_maps(model, train_data_path, probab_path, img_wise_indice
 		np.save(os.path.join(probab_path, "label_"+str(label)+".npy"), class_probab_map)
 	print("PREDICTED ALL THE MAPS")
 
-def E_step(train_data_path, probab_path, img_wise_indices, patch_wise_indices, img_lvl_pctl=5, class_lvl_pctl=5, n_classes=2):
+def E_step(train_data_path, probab_path, img_wise_indices, patch_wise_indices, img_lvl_pctl=10, class_lvl_pctl=10, n_classes=2):
 
 	for label in range(n_classes):
 		class_probab_map = np.load(os.path.join(probab_path, "label_"+str(label)+".npy"))
