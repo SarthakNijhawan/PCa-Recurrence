@@ -29,11 +29,10 @@ from keras import backend as K
 # tmp_probab_path = './probab_maps_dump'
 
 model_path = './saved_models'
-patient_wise_patches_path = './tmp/anno_cent'
-data_path = './tmp/data_dump'
-tmp_train_data_path = './tmp/train_tmp'									# tmp dir for training. will be deleted b4 the program closes
+data_path = './data_dump'
+tmp_train_data_path = './train_tmp'									# tmp dir for training. will be deleted b4 the program closes
 val_data_path = data_path + '/valid'
-tmp_probab_path = './tmp/probab_maps_dump_tmp'
+tmp_probab_path = './probab_maps_dump_tmp'
 
 
 n_iter = 20
@@ -55,10 +54,10 @@ def main():
 	K.set_session(sess)
 
 	# Maintains a tmp directory for training, due to regular updations made on the directory
-	if os.path.exists(tmp_train_data_path):
-		shutil.rmtree(tmp_train_data_path)
+	# if os.path.exists(tmp_train_data_path):
+	# 	shutil.rmtree(tmp_train_data_path)
 
-	shutil.copytree(os.path.join(data_path, "train"), tmp_train_data_path)
+	# shutil.copytree(os.path.join(data_path, "train"), tmp_train_data_path)
 	
 
 	# Defining a model
@@ -74,12 +73,11 @@ def main():
 						batch_size=batch_size)														#TODO
 
 	print("First iteration of EM algo over")
-
-	if n_iter > 1:
-		print("LOADING INDICES NOW ........")
-		start_time = time.time()
-		img_wise_indices, patch_wise_indices = load_indices(tmp_train_data_path)
-		print("--- %s seconds ---" % (time.time() - start_time))
+	
+	print("LOADING INDICES NOW ........")
+	start_time = time.time()
+	img_wise_indices, patch_wise_indices = load_indices(tmp_train_data_path)
+	print("--- %s seconds ---" % (time.time() - start_time))
 
 	#################### 2nd Iteration Onwards ########################
 	for itr in range(n_iter-1):
@@ -91,7 +89,7 @@ def main():
 
 		# E-step
 		generate_predicted_maps(model, tmp_train_data_path, tmp_probab_path, img_wise_indices)		#TODO
-		print("Probab maps predicted!!")
+		# print("Probab maps predicted!!")
 		# raw_input('Halt')
 
 		E_step(tmp_train_data_path, tmp_probab_path, img_wise_indices, patch_wise_indices)			#TODO	
@@ -248,7 +246,7 @@ def generate_predicted_maps(model, train_data_path, probab_path, img_wise_indice
 		class_data_path = os.path.join(train_data_path, "label_"+str(label))
 		patch_list = os.listdir(class_data_path)
 
-		class_probab_map = np.zeros((1, 2))
+		class_probab_map = np.zeros((1,))
 		class_probab_map = np.delete(class_probab_map, [0], axis=0)
 
 		for img_name in img_wise_indices[label].keys():
@@ -262,11 +260,14 @@ def generate_predicted_maps(model, train_data_path, probab_path, img_wise_indice
 			
 			img_probab_map = model.predict(patches, batch_size=1024)
 			np.save(os.path.join(probab_path, "label_"+str(label), img_name+".npy"), img_probab_map[:,label])
-
-			class_probab_map = np.concatenate((class_probab_map, img_probab_map))
-			print("Predicted map completed for", img_name)
+			img_probab_map_new = img_probab_map[:, label] 
+			class_probab_map = np.concatenate((class_probab_map, img_probab_map[:, label]))
+			# print("highest probab in class till now:", np.max(class_probab_map))
+			# print("highest probab in image:", np.max(img_probab_map_new))
+			# print("Predicted map completed for", img_name)
 
 		np.save(os.path.join(probab_path, "label_"+str(label)+".npy"), class_probab_map)
+
 	print("PREDICTED ALL THE MAPS")
 
 def E_step(train_data_path, probab_path, img_wise_indices, patch_wise_indices, img_lvl_pctl=10, class_lvl_pctl=10, n_classes=2):
@@ -281,8 +282,8 @@ def E_step(train_data_path, probab_path, img_wise_indices, patch_wise_indices, i
 		for img_name in img_wise_indices[label].keys():
 			img_probab_map = np.load(os.path.join(probab_path, "label_"+str(label), img_name+".npy"))
 			img_lvl_thresh = np.percentile(img_probab_map, img_lvl_pctl)
-			print("image probab_map shape:", img_probab_map.shape)
-			print("class probab map shape:", class_probab_map.shape)
+			# print("image probab_map shape:", img_probab_map.shape)
+			# print("class probab map shape:", class_probab_map.shape)
 
 			reconstructed_probab_map = np.zeros([2000,2000])
 
@@ -294,13 +295,15 @@ def E_step(train_data_path, probab_path, img_wise_indices, patch_wise_indices, i
 				probability = img_probab_map[index]
 				orig_patch_probab = reconstructed_probab_map[patch_cent_coord[0]-50: patch_cent_coord[0]+51, \
 										patch_cent_coord[1]-50:patch_cent_coord[1]+51]
-				new_patch_prob = probability*GaussianKernel()
+				# new_patch_prob = probability*GaussianKernel()
+				new_patch_prob = probability*UniformKernel()
 				reconstructed_probab_map[patch_cent_coord[0]-50: patch_cent_coord[0]+51, patch_cent_coord[1]-50:patch_cent_coord[1]+51] = \
 					np.maximum(orig_patch_probab, new_patch_prob)
-			print("IMAGE :", img_name)
+
+			# print("IMAGE :", img_name)
 			# print("Reconstruction done successfully!!")
 			print("class_lvl_thresh :", class_lvl_thresh)
-			print("img_lvl_thresh :", img_lvl_thresh)
+			# print("img_lvl_thresh :", img_lvl_thresh)
 
 			threshold = min(img_lvl_thresh, class_lvl_thresh)
 			discriminative_mask = (reconstructed_probab_map>threshold) | (reconstructed_probab_map==threshold)
@@ -309,6 +312,7 @@ def E_step(train_data_path, probab_path, img_wise_indices, patch_wise_indices, i
 				patch_cent_coord = patch_wise_indices[label][patch_name]["coord"]
 				if discriminative_mask[patch_cent_coord[0], patch_cent_coord[1]] is False:
 					os.remove(os.path.join(train_data_path, "label_"+str(label), patch_name+".png"))
+					print("This patch", patch_name, "is false !!")
 
 
 #################################################################
@@ -317,11 +321,18 @@ def E_step(train_data_path, probab_path, img_wise_indices, patch_wise_indices, i
 def load_patch(img_path):
 	return cv2.imread(img_path)
 
-def GaussianKernel(ksize=101, nsig=30):
+def GaussianKernel(ksize=101, nsig=1):
 	gauss1D = cv2.getGaussianKernel(ksize, nsig)
 	gauss2D = gauss1D*np.transpose(gauss1D)
 	gauss2D = gauss2D/gauss2D[int(ksize/2), int(ksize/2)]
 	return gauss2D
+def UniformKernel(ksize=101, sq_len=2):
+	sq_len_shape = 2*sq_len + 1
+	
+	uniform2D = np.zeros((ksize, ksize))
+	uniform2D[ksize/2-sq_len:ksize/2+sq_len+1, ksize/2-sq_len:ksize/2+sq_len+1] = \
+		np.ones((sq_len_shape, sq_len_shape))
+	return uniform2D
 
 if __name__ == '__main__':
 	main()
