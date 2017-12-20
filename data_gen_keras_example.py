@@ -98,7 +98,6 @@ model.compile(loss='categorical_crossentropy',
 
 # This will do preprocessing and realtime data augmentation:
 datagen = ImageDataGenerator(rescale=1.0/255.)
-#datagen_augmented = ImageDataGenerator(rescale=1.0,horizontal_flip=True,vertical_flip=True,rotation_range=90,width_shift_range=0.2,height_shift_range=0.2,)#,preprocessing_function=images_aug)
 datagen_augmented = ImageDataGenerator(featurewise_center=False,
     samplewise_center=True,
     featurewise_std_normalization=False,

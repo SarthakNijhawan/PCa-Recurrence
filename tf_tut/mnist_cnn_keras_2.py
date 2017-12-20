@@ -21,7 +21,6 @@ y_test = np_utils.to_categorical(y_test, 10)
 # @todo : local_response_normalization layer
 
 # Keras layers can be called on TensorFlow tensors:
-
 input_img = Input(shape=(28, 28, 1))
 conv1 = Conv2D(32, 5, strides=1, padding='same', activation=None, kernel_initializer='he_normal')(input_img)
 conv1 = Activation('relu')(conv1)
@@ -32,8 +31,6 @@ conv2 = Activation('relu')(conv2)
 conv2 = MaxPooling2D(pool_size=(2, 2), strides=2)(conv2)
 
 conv2_flatten = Flatten()(conv2)
-# conv2_flatten = tf.reshape(conv2, [-1, 7*7*64])
-
 dense1 = Dense(1024, activation='relu')(conv2_flatten)
 dense1 = Dropout(0.8)(dense1)
 
