@@ -22,17 +22,16 @@ from keras import backend as K
 
 # --------------------- Global Variables -------------------------
 # model_path = './saved_models'
-# patient_wise_patches_path = './anno_cent'
 # data_path = './data_dump'
 # tmp_train_data_path = './train_tmp'									# tmp dir for training. will be deleted b4 the program closes
 # val_data_path = data_path + '/valid'
 # tmp_probab_path = './probab_maps_dump'
 
-model_path = './saved_models'
-data_path = './data_dump'
-tmp_train_data_path = './train_tmp'									# tmp dir for training. will be deleted b4 the program closes
+model_path = './tmp/saved_models'
+data_path = './tmp/data_dump'
+tmp_train_data_path = './tmp/train_tmp'									# tmp dir for training. will be deleted b4 the program closes
 val_data_path = data_path + '/valid'
-tmp_probab_path = './probab_maps_dump_tmp'
+tmp_probab_path = './tmp/probab_maps_dump_tmp'
 
 
 n_iter = 20
@@ -59,7 +58,6 @@ def main():
 
 	# shutil.copytree(os.path.join(data_path, "train"), tmp_train_data_path)
 	
-
 	# Defining a model
 	model = patch_based_cnn_model()
 
@@ -70,8 +68,7 @@ def main():
 	#################### Initial M-step ######################## 
 	# Training and predictions of probability maps
 	train_and_validate(model, training_generator, validation_generator, tmp_train_data_path, val_data_path,\
-						batch_size=batch_size)														#TODO
-
+						batch_size=batch_size)
 	print("First iteration of EM algo over")
 	
 	print("LOADING INDICES NOW ........")
@@ -100,10 +97,8 @@ def main():
 
 		# M-Step
 		train_and_validate(model, training_generator, validation_generator, tmp_train_data_path, val_data_path,\
-						batch_size=batch_size)														#TODO
+						batch_size=batch_size)
 		print("{}th iteration's M-step performed!!".format(itr+1))
-
-
 
 	# saving the model
 	saver = tf.train.Saver()
@@ -201,7 +196,7 @@ def train_and_validate(model, training_generator, validation_generator, train_da
 		    epochs=n_epochs,
 		    verbose=1,
 		    validation_data=validation_generator,
-			validation_steps=val_samples// batch_size)
+			validation_steps=val_samples // batch_size)
 			# callbacks=[checkpointer,csv_logger])
 
 ##################################################################
@@ -258,14 +253,13 @@ def generate_predicted_maps(model, train_data_path, probab_path, img_wise_indice
 				patch = load_patch(patch_path)
 				patches = np.concatenate((patches, np.expand_dims(patch, axis=0)))
 			
-			img_probab_map = model.predict(patches, batch_size=1024)
-			np.save(os.path.join(probab_path, "label_"+str(label), img_name+".npy"), img_probab_map[:,label])
-			img_probab_map_new = img_probab_map[:, label] 
-			class_probab_map = np.concatenate((class_probab_map, img_probab_map[:, label]))
-			# print("highest probab in class till now:", np.max(class_probab_map))
-			# print("highest probab in image:", np.max(img_probab_map_new))
-			# print("Predicted map completed for", img_name)
+			img_probab_map = model.predict(patches)
 
+			# saves the probab_map for the img
+			np.save(os.path.join(probab_path, "label_"+str(label), img_name+".npy"), img_probab_map[:,label])
+			class_probab_map = np.concatenate((class_probab_map, img_probab_map[:, label]))
+
+		# Saves the class lvl probab maps
 		np.save(os.path.join(probab_path, "label_"+str(label)+".npy"), class_probab_map)
 
 	print("PREDICTED ALL THE MAPS")
@@ -282,16 +276,14 @@ def E_step(train_data_path, probab_path, img_wise_indices, patch_wise_indices, i
 		for img_name in img_wise_indices[label].keys():
 			img_probab_map = np.load(os.path.join(probab_path, "label_"+str(label), img_name+".npy"))
 			img_lvl_thresh = np.percentile(img_probab_map, img_lvl_pctl)
-			# print("image probab_map shape:", img_probab_map.shape)
-			# print("class probab map shape:", class_probab_map.shape)
 
 			reconstructed_probab_map = np.zeros([2000,2000])
-
+			coord_list = []
 			for index in range(img_probab_map.shape[0]):
 				patch_index = img_wise_indices[label][img_name][index]
 				patch_name = patch_list[patch_index].split(".")[0]
 				patch_cent_coord = patch_wise_indices[label][patch_name]["coord"]
-
+				coord_list += [patch_cent_coord,]
 				probability = img_probab_map[index]
 				orig_patch_probab = reconstructed_probab_map[patch_cent_coord[0]-50: patch_cent_coord[0]+51, \
 										patch_cent_coord[1]-50:patch_cent_coord[1]+51]
@@ -302,18 +294,26 @@ def E_step(train_data_path, probab_path, img_wise_indices, patch_wise_indices, i
 
 			# print("IMAGE :", img_name)
 			# print("Reconstruction done successfully!!")
-			print("class_lvl_thresh :", class_lvl_thresh)
-			# print("img_lvl_thresh :", img_lvl_thresh)
+			print("img_lvl_thresh :", img_lvl_thresh)
 
-			threshold = min(img_lvl_thresh, class_lvl_thresh)
-			discriminative_mask = (reconstructed_probab_map>threshold) | (reconstructed_probab_map==threshold)
-
-			for patch_name in patch_wise_indices[label].keys():
+			# threshold = min(img_lvl_thresh, class_lvl_thresh)										#FIXME
+			threshold = img_lvl_thresh
+			discriminative_mask = (reconstructed_probab_map>=threshold)
+			print(img_probab_map)
+			# img_probab_map[:, label] >= threshold
+			# print(len(coord_list))
+			# print(coord_list)
+			# print(discriminative_mask[np.array(coord_list)])
+			# raw_input("Halt : ")
+			for patch_index in img_wise_indices[label][img_name]:
+				patch_name = patch_list[patch_index].split(".")[0]
 				patch_cent_coord = patch_wise_indices[label][patch_name]["coord"]
 				if discriminative_mask[patch_cent_coord[0], patch_cent_coord[1]] is False:
 					os.remove(os.path.join(train_data_path, "label_"+str(label), patch_name+".png"))
-					print("This patch", patch_name, "is false !!")
+					print("Removing : ", patch_name)
+			raw_input("Halt:")
 
+		print("class_lvl_thresh :", class_lvl_thresh)
 
 #################################################################
 # -------------------- Other Helper functions ------------------#
