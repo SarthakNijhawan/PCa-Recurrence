@@ -1,6 +1,6 @@
 from __future__ import print_function
 import os
-os.environ["CUDA_VISIBLE_DEVICES"]="0"
+os.environ["CUDA_VISIBLE_DEVICES"]="1"
 
 import numpy as np
 import scipy.stats as st
@@ -14,7 +14,7 @@ seed(1)
 from tensorflow import set_random_seed
 set_random_seed(1)
 from keras.preprocessing.image import ImageDataGenerator
-from keras.layers import Dense, Dropout, Conv2D, MaxPooling2D, Activation, Input, Flatten
+from keras.layers import Dense, Dropout, Conv2D, MaxPooling2D, Activation, Input, Flatten, BatchNormalization
 from keras.models import Model
 from keras.optimizers import Adam,SGD, RMSprop
 from keras import backend as K
@@ -68,37 +68,32 @@ def main():
 	#################### Initial M-step ######################## 
 	# Training and predictions of probability maps
 	train_and_validate(model, training_generator, validation_generator, tmp_train_data_path, val_data_path,\
-						batch_size=batch_size)
+						batch_size=batch_size, n_epochs=5)
 	print("First iteration of EM algo over")
-	
-	print("LOADING INDICES NOW ........")
-	start_time = time.time()
-	img_wise_indices, patch_wise_indices = load_indices(tmp_train_data_path)
-	print("--- %s seconds ---" % (time.time() - start_time))
 
 	#################### 2nd Iteration Onwards ########################
 	for itr in range(n_iter-1):
-		if os.path.exists(tmp_probab_path):
-			shutil.rmtree(tmp_probab_path)
-		os.mkdir(tmp_probab_path)
-		for label in range(n_classes):
-			os.mkdir(os.path.join(tmp_probab_path, "label_"+str(label)))
+		make_probab_path(tmp_probab_path)
 
-		# E-step
-		generate_predicted_maps(model, tmp_train_data_path, tmp_probab_path, img_wise_indices)		#TODO
-		# print("Probab maps predicted!!")
-		# raw_input('Halt')
-
-		E_step(tmp_train_data_path, tmp_probab_path, img_wise_indices, patch_wise_indices)			#TODO	
 		img_wise_indices, patch_wise_indices = load_indices(tmp_train_data_path)
-		print("{}th iteration's E-step performed!!".format(itr+1))
-		# raw_input('Halt')		
-		shutil.rmtree(tmp_probab_path)
+		print("Length of patch wise indices for label_0:", len(patch_wise_indices[0]), "!!!!")
+		print("Length of patch wise indices for label_1:", len(patch_wise_indices[1]), "!!!!")
 
-		# M-Step
+		######### E-step #########
+		generate_predicted_maps(model, tmp_train_data_path, tmp_probab_path, img_wise_indices)
+		raw_input('::::::::::::::::::: HALT ::::::::::::::::::::')
+
+		E_step(tmp_train_data_path, tmp_probab_path, img_wise_indices, patch_wise_indices)
+		shutil.rmtree(tmp_probab_path)
+		print("{} iteration ::::::::::: E-step performed!!".format(itr+1))
+		# raw_input('::::::::::::::::::: HALT ::::::::::::::::::::')
+
+		######### M-Step #########
 		train_and_validate(model, training_generator, validation_generator, tmp_train_data_path, val_data_path,\
 						batch_size=batch_size)
-		print("{}th iteration's M-step performed!!".format(itr+1))
+
+		print("{} iteration ::::::::::: M-step performed!!".format(itr+1))
+
 
 	# saving the model
 	saver = tf.train.Saver()
@@ -118,12 +113,12 @@ def patch_based_cnn_model(dropout_prob=0.5, l_rate=0.5, n_classes=2, img_rows=10
 	# Layers
 	input_img=Input(shape=(img_rows,img_cols,3))
 	convnet = Conv2D(80, 6, strides=1, padding='valid', activation=None, kernel_initializer='he_normal')(input_img)
-	# convnet = tf.nn.local_response_normalization(convnet)								#FIXME
+	convnet = BatchNormalization()(convnet)												#FIXME
 	convnet = Activation('relu')(convnet)
 	convnet = MaxPooling2D(pool_size=(2, 2), strides=2)(convnet)
 
 	convnet = Conv2D(120, 5, strides=1, padding='valid', activation=None, kernel_initializer='he_normal')(convnet)
-	# convnet = tf.nn.local_response_normalization(convnet)								#FIXME
+	convnet = BatchNormalization()(convnet)												#FIXME
 	convnet = Activation('relu')(convnet)
 	convnet = MaxPooling2D(pool_size=(2, 2), strides=2)(convnet)
 
@@ -197,7 +192,7 @@ def train_and_validate(model, training_generator, validation_generator, train_da
 		    verbose=1,
 		    validation_data=validation_generator,
 			validation_steps=val_samples // batch_size)
-			# callbacks=[checkpointer,csv_logger])
+			# callbacks=[checkpointer,csv_logger])														#TODO
 
 ##################################################################
 #--------------------- EM Algo Helper functions -------------------#
@@ -230,10 +225,7 @@ def load_indices(train_data_path, n_classes=2):
 		img_wise_indices += [label_img_wise_indices,]
 		patch_wise_indices += [label_patch_wise_indices,]
 
-	print("Length of patch wise indices for label_0:", len(patch_wise_indices[0]),"!!!!")
-	print("Length of patch wise indices for label_1:", len(patch_wise_indices[1]),"!!!!")
 	return img_wise_indices, patch_wise_indices
-
 
 def generate_predicted_maps(model, train_data_path, probab_path, img_wise_indices, n_classes=2):
 
@@ -243,26 +235,32 @@ def generate_predicted_maps(model, train_data_path, probab_path, img_wise_indice
 
 		class_probab_map = np.zeros((1,))
 		class_probab_map = np.delete(class_probab_map, [0], axis=0)
+		# print("class_probab_map shape:", class_probab_map.shape)
 
+		# Iterating img_wise over the patches
 		for img_name in img_wise_indices[label].keys():
 			patches = np.zeros((1, 101, 101, 3))
 			patches = np.delete(patches, [0], axis=0)
 			
+			# For all the patches of the image
 			for patch_index in img_wise_indices[label][img_name]:
 				patch_path = os.path.join(class_data_path, patch_list[patch_index])
 				patch = load_patch(patch_path)
 				patches = np.concatenate((patches, np.expand_dims(patch, axis=0)))
 			
 			img_probab_map = model.predict(patches)
+			img_probab_map = img_probab_map[:, label]
+			# print('img_probab_map shape:', img_probab_map.shape)
 
 			# saves the probab_map for the img
-			np.save(os.path.join(probab_path, "label_"+str(label), img_name+".npy"), img_probab_map[:,label])
-			class_probab_map = np.concatenate((class_probab_map, img_probab_map[:, label]))
+			np.save(os.path.join(probab_path, "label_"+str(label), img_name+".npy"), img_probab_map)
+			class_probab_map = np.concatenate((class_probab_map, img_probab_map))
+			# raw_input('::::::::::::::::::: HALT ::::::::::::::::::::')
 
 		# Saves the class lvl probab maps
 		np.save(os.path.join(probab_path, "label_"+str(label)+".npy"), class_probab_map)
 
-	print("PREDICTED ALL THE MAPS")
+	print("PREDICTED ALL THE MAPS !!!!!!!!")
 
 def E_step(train_data_path, probab_path, img_wise_indices, patch_wise_indices, img_lvl_pctl=10, class_lvl_pctl=10, n_classes=2):
 
@@ -283,7 +281,7 @@ def E_step(train_data_path, probab_path, img_wise_indices, patch_wise_indices, i
 				patch_index = img_wise_indices[label][img_name][index]
 				patch_name = patch_list[patch_index].split(".")[0]
 				patch_cent_coord = patch_wise_indices[label][patch_name]["coord"]
-				coord_list += [patch_cent_coord,]
+				# coord_list += [patch_cent_coord,]
 				probability = img_probab_map[index]
 				orig_patch_probab = reconstructed_probab_map[patch_cent_coord[0]-50: patch_cent_coord[0]+51, \
 										patch_cent_coord[1]-50:patch_cent_coord[1]+51]
@@ -295,25 +293,30 @@ def E_step(train_data_path, probab_path, img_wise_indices, patch_wise_indices, i
 			# print("IMAGE :", img_name)
 			# print("Reconstruction done successfully!!")
 			print("img_lvl_thresh :", img_lvl_thresh)
+			print("class_lvl_thresh :", class_lvl_thresh)
+			
+			threshold = min(img_lvl_thresh, class_lvl_thresh)
+			discriminative_mask = (reconstructed_probab_map >= threshold)
 
-			# threshold = min(img_lvl_thresh, class_lvl_thresh)										#FIXME
-			threshold = img_lvl_thresh
-			discriminative_mask = (reconstructed_probab_map>=threshold)
+			print("Minimum thresh :", threshold)
 			print(img_probab_map)
 			# img_probab_map[:, label] >= threshold
 			# print(len(coord_list))
 			# print(coord_list)
 			# print(discriminative_mask[np.array(coord_list)])
 			# raw_input("Halt : ")
-			for patch_index in img_wise_indices[label][img_name]:
+			for index in range(img_probab_map.shape[0]):
+				patch_index = img_wise_indices[label][img_name][index]
 				patch_name = patch_list[patch_index].split(".")[0]
 				patch_cent_coord = patch_wise_indices[label][patch_name]["coord"]
 				if discriminative_mask[patch_cent_coord[0], patch_cent_coord[1]] is False:
 					os.remove(os.path.join(train_data_path, "label_"+str(label), patch_name+".png"))
 					print("Removing : ", patch_name)
+
 			raw_input("Halt:")
 
 		print("class_lvl_thresh :", class_lvl_thresh)
+
 
 #################################################################
 # -------------------- Other Helper functions ------------------#
@@ -326,13 +329,21 @@ def GaussianKernel(ksize=101, nsig=1):
 	gauss2D = gauss1D*np.transpose(gauss1D)
 	gauss2D = gauss2D/gauss2D[int(ksize/2), int(ksize/2)]
 	return gauss2D
-def UniformKernel(ksize=101, sq_len=2):
+
+def UniformKernel(ksize=101, sq_len=3):
 	sq_len_shape = 2*sq_len + 1
 	
 	uniform2D = np.zeros((ksize, ksize))
 	uniform2D[ksize/2-sq_len:ksize/2+sq_len+1, ksize/2-sq_len:ksize/2+sq_len+1] = \
 		np.ones((sq_len_shape, sq_len_shape))
 	return uniform2D
+
+def make_probab_path(probab_path, n_classes=2):
+	if os.path.exists(probab_path):
+		shutil.rmtree(probab_path)
+	os.mkdir(probab_path)
+	for label in range(n_classes):
+		os.mkdir(os.path.join(probab_path, "label_"+str(label)))
 
 if __name__ == '__main__':
 	main()
