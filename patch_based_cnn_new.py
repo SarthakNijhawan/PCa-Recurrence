@@ -27,6 +27,7 @@ from keras import backend as K
 # val_data_path = data_path + '/valid'
 # tmp_probab_path = './probab_maps_dump'
 # discarded_patches = './discarded_patches'
+# reconstructed_probab_map_path = './tmp/reconstrued_maps'
 
 model_path = './tmp/saved_models'
 data_path = './tmp/data_dump'
@@ -37,7 +38,7 @@ discarded_patches = './tmp/discarded_patches'
 reconstructed_probab_map_path = './tmp/reconstrued_maps'
 
 n_iter = 20
-batch_size = 128
+batch_size = 32
 n_classes = 2
 data_augmentation = True
 
@@ -79,6 +80,7 @@ def main():
 	#################### 2nd Iteration Onwards ########################
 	for itr in range(n_iter-1):
 		make_dir(tmp_probab_path)
+		print(":::::::::::::::::::::: {}th iteration ::::::::::::::::::::".format(itr+2))
 
 		img_wise_indices, patch_wise_indices = load_indices(tmp_train_data_path)
 		print("Length of patch wise indices for label_0:", len(patch_wise_indices[0]))
@@ -86,18 +88,18 @@ def main():
 
 		######### E-step #########
 		generate_predicted_maps(model, tmp_train_data_path, tmp_probab_path, img_wise_indices)
-		raw_input('::::::::::::::::::: HALT ::::::::::::::::::::')
+		# raw_input('::::::::::::::::::: HALT ::::::::::::::::::::')
 
-		E_step(tmp_train_data_path, tmp_probab_path, discarded_patches, img_wise_indices, patch_wise_indices, reconstructed_probab_map_path)									#TODO
+		E_step(tmp_train_data_path, tmp_probab_path, discarded_patches, img_wise_indices, patch_wise_indices, reconstructed_probab_map_path, itr+2)									#TODO
 		shutil.rmtree(tmp_probab_path)
-		print("{} iteration ::::::::::: E-step performed!!".format(itr+1))
+		print("{} iteration ::::::::::: E-step performed!!".format(itr+2))
 		# raw_input('::::::::::::::::::: HALT ::::::::::::::::::::')
 
 		######### M-Step #########
 		train_and_validate(model, train_data_gen, valid_data_gen, tmp_train_data_path, val_data_path,\
 						batch_size=batch_size)
 
-		print("{} iteration ::::::::::: M-step performed!!".format(itr+1))
+		print("{} iteration ::::::::::: M-step performed!!".format(itr+2))
 
 
 	# saving the model
@@ -273,7 +275,7 @@ def generate_predicted_maps(model, train_data_path, probab_path, img_wise_indice
 
 	print("PREDICTED ALL THE MAPS !!!!!!!!")
 
-def E_step(train_data_path, probab_path, discard_patches_dir, img_wise_indices, patch_wise_indices, reconstructed_probab_map_path, img_lvl_pctl=10, class_lvl_pctl=10, n_classes=2):
+def E_step(train_data_path, probab_path, discard_patches_dir, img_wise_indices, patch_wise_indices, reconstructed_probab_map_path, iteration, img_lvl_pctl=10, class_lvl_pctl=10, n_classes=2):
 
 	for label in range(n_classes):
 		class_probab_map = np.load(os.path.join(probab_path, "label_"+str(label)+".npy"))
@@ -310,14 +312,17 @@ def E_step(train_data_path, probab_path, discard_patches_dir, img_wise_indices, 
 			discriminative_mask = reconstructed_probab_map >= threshold
 
 			# Saving visualisable probab and discriminative maps
-			img_recons_path = os.path.join(reconstructed_probab_map_path, "label_"+str(label), img_name+"_reconstructed.jpg")
-			img_discrim_path = os.path.join(reconstructed_probab_map_path, "label_"+str(label), img_name+"_discriminative.jpg")
+			img_recons_path = img_recons_path = os.path.join(reconstructed_probab_map_path, "label_"+str(label), img_name)
+			if not os.path.exists(img_recons_path):
+				os.mkdir(img_recons_path)
+			img_recons_file = os.path.join(img_recons_path, str(iteration)+"_reconstructed.jpg")
+			img_discrim_file = os.path.join(img_recons_path, str(iteration)+"_discriminative.jpg")
 			cv2.imwrite(img_recons_path, np.uint8(255*reconstructed_probab_map))
 			cv2.imwrite(img_discrim_path, np.uint8(255*reconstructed_probab_map[discriminative_mask]))
 
 			# print("discriminative_mask shape:", discriminative_mask.shape, "type:", discriminative_mask.dtype)
 
-			print("Minimum thresh :", threshold)
+			# print("Minimum thresh :", threshold)
 			# print(img_probab_map)
 			
 			for index in range(img_probab_map.shape[0]):
@@ -327,7 +332,7 @@ def E_step(train_data_path, probab_path, discard_patches_dir, img_wise_indices, 
 				if discriminative_mask[patch_cent_coord[0], patch_cent_coord[1]] == False:
 					shutil.move(os.path.join(train_data_path, "label_"+str(label), patch_name+".png"), \
 						discard_patches_dir)
-					print("Removing : ", patch_name)
+					# print("Removing : ", patch_name)
 
 			# discrim_map = img_probab_map >= threshold
 			# print(discrim_map)			
