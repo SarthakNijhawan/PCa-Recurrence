@@ -1,4 +1,4 @@
-from __future__ import print_function
+# from __future__ import print_function
 import os
 os.environ["CUDA_VISIBLE_DEVICES"]="1"
 
@@ -26,13 +26,15 @@ from keras import backend as K
 # tmp_train_data_path = './train_tmp'									# tmp dir for training. will be deleted b4 the program closes
 # val_data_path = data_path + '/valid'
 # tmp_probab_path = './probab_maps_dump'
+# discarded_patches = './discarded_patches'
 
 model_path = './tmp/saved_models'
 data_path = './tmp/data_dump'
 tmp_train_data_path = './tmp/train_tmp'									# tmp dir for training. will be deleted b4 the program closes
 val_data_path = data_path + '/valid'
 tmp_probab_path = './tmp/probab_maps_dump_tmp'
-
+discarded_patches = './tmp/discarded_patches'
+reconstructed_probab_map_path = './tmp/reconstrued_maps'
 
 n_iter = 20
 batch_size = 128
@@ -48,48 +50,51 @@ img_channels = 3
 
 # --------------------- Main Function ----------------------------
 def main():
-	# Default Session for Keras
-	sess = tf.Session()
+	sess=tf.Session()
 	K.set_session(sess)
-
 	# Maintains a tmp directory for training, due to regular updations made on the directory
-	# if os.path.exists(tmp_train_data_path):
-	# 	shutil.rmtree(tmp_train_data_path)
+	if os.path.exists(tmp_train_data_path):
+		shutil.rmtree(tmp_train_data_path)
 
-	# shutil.copytree(os.path.join(data_path, "train"), tmp_train_data_path)
+	print("Making a tmp storage for train data.........")
+	shutil.copytree(os.path.join(data_path, "train"), tmp_train_data_path)
 	
+	# discarded patches dir
+	make_dir(discarded_patches, False)
+	make_dir(reconstructed_probab_map_path)
+
 	# Defining a model
 	model = patch_based_cnn_model()
 
 	# This will do preprocessing and realtime data augmentation:
-	training_generator, validation_generator = data_generator(tmp_train_data_path, \
+	train_data_gen, valid_data_gen = data_generator(tmp_train_data_path, \
 		val_data_path, batch_size=batch_size)
 
 	#################### Initial M-step ######################## 
 	# Training and predictions of probability maps
-	train_and_validate(model, training_generator, validation_generator, tmp_train_data_path, val_data_path,\
-						batch_size=batch_size, n_epochs=5)
+	train_and_validate(model, train_data_gen, valid_data_gen, tmp_train_data_path, val_data_path,\
+						batch_size=batch_size, n_epochs=2)
 	print("First iteration of EM algo over")
 
 	#################### 2nd Iteration Onwards ########################
 	for itr in range(n_iter-1):
-		make_probab_path(tmp_probab_path)
+		make_dir(tmp_probab_path)
 
 		img_wise_indices, patch_wise_indices = load_indices(tmp_train_data_path)
-		print("Length of patch wise indices for label_0:", len(patch_wise_indices[0]), "!!!!")
-		print("Length of patch wise indices for label_1:", len(patch_wise_indices[1]), "!!!!")
+		print("Length of patch wise indices for label_0:", len(patch_wise_indices[0]))
+		print("Length of patch wise indices for label_1:", len(patch_wise_indices[1]))
 
 		######### E-step #########
 		generate_predicted_maps(model, tmp_train_data_path, tmp_probab_path, img_wise_indices)
 		raw_input('::::::::::::::::::: HALT ::::::::::::::::::::')
 
-		E_step(tmp_train_data_path, tmp_probab_path, img_wise_indices, patch_wise_indices)
+		E_step(tmp_train_data_path, tmp_probab_path, discarded_patches, img_wise_indices, patch_wise_indices, reconstructed_probab_map_path)									#TODO
 		shutil.rmtree(tmp_probab_path)
 		print("{} iteration ::::::::::: E-step performed!!".format(itr+1))
 		# raw_input('::::::::::::::::::: HALT ::::::::::::::::::::')
 
 		######### M-Step #########
-		train_and_validate(model, training_generator, validation_generator, tmp_train_data_path, val_data_path,\
+		train_and_validate(model, train_data_gen, valid_data_gen, tmp_train_data_path, val_data_path,\
 						batch_size=batch_size)
 
 		print("{} iteration ::::::::::: M-step performed!!".format(itr+1))
@@ -100,6 +105,7 @@ def main():
 	saver.save(sess, model_path)
 
 	# EM-Algo completed
+	shutil.rmtree(discarded_patches)
 	shutil.rmtree(tmp_train_data_path)
 	sess.close()
 	print("Training Completed Successfully !!")
@@ -112,13 +118,15 @@ def patch_based_cnn_model(dropout_prob=0.5, l_rate=0.5, n_classes=2, img_rows=10
 
 	# Layers
 	input_img=Input(shape=(img_rows,img_cols,3))
-	convnet = Conv2D(80, 6, strides=1, padding='valid', activation=None, kernel_initializer='he_normal')(input_img)
-	convnet = BatchNormalization()(convnet)												#FIXME
+	convnet = BatchNormalization()(input_img)
+
+	convnet = Conv2D(80, 6, strides=1, padding='valid', activation=None, kernel_initializer='he_normal')(convnet)
+	convnet = BatchNormalization(axis=3)(convnet)
 	convnet = Activation('relu')(convnet)
 	convnet = MaxPooling2D(pool_size=(2, 2), strides=2)(convnet)
 
 	convnet = Conv2D(120, 5, strides=1, padding='valid', activation=None, kernel_initializer='he_normal')(convnet)
-	convnet = BatchNormalization()(convnet)												#FIXME
+	convnet = BatchNormalization(axis=3)(convnet)
 	convnet = Activation('relu')(convnet)
 	convnet = MaxPooling2D(pool_size=(2, 2), strides=2)(convnet)
 
@@ -167,26 +175,27 @@ def data_generator(train_data_path, val_data_path, batch_size=128, img_rows=101,
 	    horizontal_flip=True,
 	    vertical_flip=True,
 	    rescale=1.0/255.,
-		    preprocessing_function=None)
-	train_generator_augmented = datagen_augmented.flow_from_directory(
-	    train_data_path,
-	    target_size=(img_cols, img_rows),
-	    batch_size=batch_size,
-	    class_mode='categorical')
-	validation_generator = datagen.flow_from_directory(
-	    val_data_path,
-	    target_size=(img_cols, img_rows),
-	    batch_size=batch_size,
-	    class_mode='categorical')
-	return [train_generator_augmented, validation_generator]
+		preprocessing_function=None)
+	return [datagen_augmented, datagen]
 
-def train_and_validate(model, training_generator, validation_generator, train_data_path, val_data_path, n_epochs=2, batch_size=128):
+def train_and_validate(model, train_data_gen, valid_data_gen, train_data_path, val_data_path, n_epochs=2, batch_size=128):
 	
 	train_samples=len(os.listdir(tmp_train_data_path+"/label_0/"))+len(os.listdir(tmp_train_data_path+"/label_1/"))
 	val_samples=len(os.listdir(val_data_path+"/label_0/"))+len(os.listdir(val_data_path+"/label_1/"))
 	
+	train_generator_augmented = train_data_gen.flow_from_directory(
+	    train_data_path,
+	    target_size=(img_cols, img_rows),
+	    batch_size=batch_size,
+	    class_mode='categorical')
+	validation_generator = valid_data_gen.flow_from_directory(
+	    val_data_path,
+	    target_size=(img_cols, img_rows),
+	    batch_size=batch_size,
+	    class_mode='categorical')
+
 	model.fit_generator(
-		    training_generator,
+		    train_generator_augmented,
 		    steps_per_epoch=train_samples // batch_size,
 		    epochs=n_epochs,
 		    verbose=1,
@@ -219,7 +228,7 @@ def load_indices(train_data_path, n_classes=2):
 
  			label_patch_wise_indices[patch_name]={}
  			label_patch_wise_indices[patch_name]["index"]=patch_index
- 			label_patch_wise_indices[patch_name][img_name]=img_name
+ 			label_patch_wise_indices[patch_name]["img_name"]=img_name
  			label_patch_wise_indices[patch_name]["coord"]=[int(patch_split[1]), int(patch_split[2])]
 	 		
 		img_wise_indices += [label_img_wise_indices,]
@@ -248,7 +257,9 @@ def generate_predicted_maps(model, train_data_path, probab_path, img_wise_indice
 				patch = load_patch(patch_path)
 				patches = np.concatenate((patches, np.expand_dims(patch, axis=0)))
 			
+			patches /= 255.0
 			img_probab_map = model.predict(patches)
+
 			img_probab_map = img_probab_map[:, label]
 			# print('img_probab_map shape:', img_probab_map.shape)
 
@@ -262,7 +273,7 @@ def generate_predicted_maps(model, train_data_path, probab_path, img_wise_indice
 
 	print("PREDICTED ALL THE MAPS !!!!!!!!")
 
-def E_step(train_data_path, probab_path, img_wise_indices, patch_wise_indices, img_lvl_pctl=10, class_lvl_pctl=10, n_classes=2):
+def E_step(train_data_path, probab_path, discard_patches_dir, img_wise_indices, patch_wise_indices, reconstructed_probab_map_path, img_lvl_pctl=10, class_lvl_pctl=10, n_classes=2):
 
 	for label in range(n_classes):
 		class_probab_map = np.load(os.path.join(probab_path, "label_"+str(label)+".npy"))
@@ -276,46 +287,62 @@ def E_step(train_data_path, probab_path, img_wise_indices, patch_wise_indices, i
 			img_lvl_thresh = np.percentile(img_probab_map, img_lvl_pctl)
 
 			reconstructed_probab_map = np.zeros([2000,2000])
-			coord_list = []
+			
+			# Iterating over all the patches of the image
 			for index in range(img_probab_map.shape[0]):
 				patch_index = img_wise_indices[label][img_name][index]
 				patch_name = patch_list[patch_index].split(".")[0]
 				patch_cent_coord = patch_wise_indices[label][patch_name]["coord"]
-				# coord_list += [patch_cent_coord,]
 				probability = img_probab_map[index]
 				orig_patch_probab = reconstructed_probab_map[patch_cent_coord[0]-50: patch_cent_coord[0]+51, \
 										patch_cent_coord[1]-50:patch_cent_coord[1]+51]
-				# new_patch_prob = probability*GaussianKernel()
-				new_patch_prob = probability*UniformKernel()
+				new_patch_prob = probability*GaussianKernel()
+				# new_patch_prob = probability*UniformKernel()
 				reconstructed_probab_map[patch_cent_coord[0]-50: patch_cent_coord[0]+51, patch_cent_coord[1]-50:patch_cent_coord[1]+51] = \
 					np.maximum(orig_patch_probab, new_patch_prob)
+				# print(reconstructed_probab_map[patch_cent_coord[0]-50: patch_cent_coord[0]+51, patch_cent_coord[1]-50:patch_cent_coord[1]+51])
+				# raw_input('::::::::::::::::::: HALT ::::::::::::::::::::')
 
-			# print("IMAGE :", img_name)
-			# print("Reconstruction done successfully!!")
-			print("img_lvl_thresh :", img_lvl_thresh)
-			print("class_lvl_thresh :", class_lvl_thresh)
+			# print("img_lvl_thresh :", img_lvl_thresh)
+			# print("class_lvl_thresh :", class_lvl_thresh)
 			
 			threshold = min(img_lvl_thresh, class_lvl_thresh)
-			discriminative_mask = (reconstructed_probab_map >= threshold)
+			discriminative_mask = reconstructed_probab_map >= threshold
+
+			# Saving visualisable probab and discriminative maps
+			img_recons_path = os.path.join(reconstructed_probab_map_path, "label_"+str(label), img_name+"_reconstructed.jpg")
+			img_discrim_path = os.path.join(reconstructed_probab_map_path, "label_"+str(label), img_name+"_discriminative.jpg")
+			cv2.imwrite(img_recons_path, np.uint8(255*reconstructed_probab_map))
+			cv2.imwrite(img_discrim_path, np.uint8(255*reconstructed_probab_map[discriminative_mask]))
+
+			# print("discriminative_mask shape:", discriminative_mask.shape, "type:", discriminative_mask.dtype)
 
 			print("Minimum thresh :", threshold)
-			print(img_probab_map)
-			# img_probab_map[:, label] >= threshold
-			# print(len(coord_list))
-			# print(coord_list)
-			# print(discriminative_mask[np.array(coord_list)])
-			# raw_input("Halt : ")
+			# print(img_probab_map)
+			
 			for index in range(img_probab_map.shape[0]):
 				patch_index = img_wise_indices[label][img_name][index]
 				patch_name = patch_list[patch_index].split(".")[0]
 				patch_cent_coord = patch_wise_indices[label][patch_name]["coord"]
-				if discriminative_mask[patch_cent_coord[0], patch_cent_coord[1]] is False:
-					os.remove(os.path.join(train_data_path, "label_"+str(label), patch_name+".png"))
+				if discriminative_mask[patch_cent_coord[0], patch_cent_coord[1]] == False:
+					shutil.move(os.path.join(train_data_path, "label_"+str(label), patch_name+".png"), \
+						discard_patches_dir)
 					print("Removing : ", patch_name)
 
-			raw_input("Halt:")
+			# discrim_map = img_probab_map >= threshold
+			# print(discrim_map)			
+			# for index in range(img_probab_map.shape[0]):
+			# 	patch_index = img_wise_indices[label][img_name][index]
+			# 	patch_name = patch_list[patch_index].split(".")[0]
+			# 	print(discrim_map[index])
+			# 	if discrim_map[index] == False:
+			# 		shutil.move(os.path.join(train_data_path, "label_"+str(label), patch_name+".png"), \
+			# 			discard_patches_dir)
+			# 		print("Removing : ", patch_name)
 
-		print("class_lvl_thresh :", class_lvl_thresh)
+			# raw_input('::::::::::::::::::: HALT ::::::::::::::::::::')
+			
+		# print("class_lvl_thresh :", class_lvl_thresh)
 
 
 #################################################################
@@ -324,13 +351,13 @@ def E_step(train_data_path, probab_path, img_wise_indices, patch_wise_indices, i
 def load_patch(img_path):
 	return cv2.imread(img_path)
 
-def GaussianKernel(ksize=101, nsig=1):
+def GaussianKernel(ksize=101, nsig=30):
 	gauss1D = cv2.getGaussianKernel(ksize, nsig)
 	gauss2D = gauss1D*np.transpose(gauss1D)
 	gauss2D = gauss2D/gauss2D[int(ksize/2), int(ksize/2)]
 	return gauss2D
 
-def UniformKernel(ksize=101, sq_len=3):
+def UniformKernel(ksize=101, sq_len=10):
 	sq_len_shape = 2*sq_len + 1
 	
 	uniform2D = np.zeros((ksize, ksize))
@@ -338,12 +365,13 @@ def UniformKernel(ksize=101, sq_len=3):
 		np.ones((sq_len_shape, sq_len_shape))
 	return uniform2D
 
-def make_probab_path(probab_path, n_classes=2):
-	if os.path.exists(probab_path):
-		shutil.rmtree(probab_path)
-	os.mkdir(probab_path)
-	for label in range(n_classes):
-		os.mkdir(os.path.join(probab_path, "label_"+str(label)))
+def make_dir(dir, needlabel=True, n_classes=2):
+	if os.path.exists(dir):
+		shutil.rmtree(dir)
+	os.mkdir(dir)
+	if needlabel is True:
+		for label in range(n_classes):
+			os.mkdir(os.path.join(dir, "label_"+str(label)))
 
 if __name__ == '__main__':
 	main()
