@@ -37,7 +37,7 @@ tmp_probab_path = './tmp/probab_maps_dump_tmp'
 discarded_patches = './tmp/discarded_patches'
 reconstructed_probab_map_path = './tmp/reconstrued_maps'
 
-n_iter = 20
+n_iter = 15
 batch_size = 32
 n_classes = 2
 data_augmentation = True
@@ -74,7 +74,7 @@ def main():
 	#################### Initial M-step ######################## 
 	# Training and predictions of probability maps
 	train_and_validate(model, train_data_gen, valid_data_gen, tmp_train_data_path, val_data_path,\
-						batch_size=batch_size, n_epochs=2)
+						batch_size=batch_size, n_epochs=5)
 	print("First iteration of EM algo over")
 
 	#################### 2nd Iteration Onwards ########################
@@ -275,7 +275,7 @@ def generate_predicted_maps(model, train_data_path, probab_path, img_wise_indice
 
 	print("PREDICTED ALL THE MAPS !!!!!!!!")
 
-def E_step(train_data_path, probab_path, discard_patches_dir, img_wise_indices, patch_wise_indices, reconstructed_probab_map_path, iteration, img_lvl_pctl=10, class_lvl_pctl=10, n_classes=2):
+def E_step(train_data_path, probab_path, discard_patches_dir, img_wise_indices, patch_wise_indices, reconstructed_probab_map_path, iteration, img_lvl_pctl=7, class_lvl_pctl=7, n_classes=2):
 
 	for label in range(n_classes):
 		class_probab_map = np.load(os.path.join(probab_path, "label_"+str(label)+".npy"))
@@ -356,7 +356,7 @@ def E_step(train_data_path, probab_path, discard_patches_dir, img_wise_indices, 
 def load_patch(img_path):
 	return cv2.imread(img_path)
 
-def GaussianKernel(ksize=101, nsig=30):
+def GaussianKernel(ksize=101, nsig=20):
 	gauss1D = cv2.getGaussianKernel(ksize, nsig)
 	gauss2D = gauss1D*np.transpose(gauss1D)
 	gauss2D = gauss2D/gauss2D[int(ksize/2), int(ksize/2)]
