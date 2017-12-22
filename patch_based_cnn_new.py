@@ -37,7 +37,7 @@ tmp_probab_path = './tmp/probab_maps_dump_tmp'
 discarded_patches = './tmp/discarded_patches'
 reconstructed_probab_map_path = './tmp/reconstrued_maps'
 
-n_iter = 15
+n_iter = 25
 batch_size = 32
 n_classes = 2
 data_augmentation = True
@@ -74,7 +74,7 @@ def main():
 	#################### Initial M-step ######################## 
 	# Training and predictions of probability maps
 	train_and_validate(model, train_data_gen, valid_data_gen, tmp_train_data_path, val_data_path,\
-						batch_size=batch_size, n_epochs=5)
+						batch_size=batch_size, n_epochs=3)
 	print("First iteration of EM algo over")
 
 	#################### 2nd Iteration Onwards ########################
@@ -88,6 +88,7 @@ def main():
 
 		######### E-step #########
 		generate_predicted_maps(model, tmp_train_data_path, tmp_probab_path, img_wise_indices)
+		print("................... Probability maps predicted .............")
 		# raw_input('::::::::::::::::::: HALT ::::::::::::::::::::')
 
 		E_step(tmp_train_data_path, tmp_probab_path, discarded_patches, img_wise_indices, patch_wise_indices, reconstructed_probab_map_path, itr+2)									#TODO
@@ -158,7 +159,7 @@ def patch_based_cnn_model(dropout_prob=0.5, l_rate=0.5, n_classes=2, img_rows=10
 
 	return model
 
-def data_generator(train_data_path, val_data_path, batch_size=128, img_rows=101, img_cols=101):
+def data_generator(train_data_path, val_data_path, batch_size=32, img_rows=101, img_cols=101):
 	datagen = ImageDataGenerator(rescale=1.0/255.)
 	datagen_augmented = ImageDataGenerator(	featurewise_center=False,
 	    samplewise_center=True,
@@ -180,7 +181,7 @@ def data_generator(train_data_path, val_data_path, batch_size=128, img_rows=101,
 		preprocessing_function=None)
 	return [datagen_augmented, datagen]
 
-def train_and_validate(model, train_data_gen, valid_data_gen, train_data_path, val_data_path, n_epochs=2, batch_size=128):
+def train_and_validate(model, train_data_gen, valid_data_gen, train_data_path, val_data_path, n_epochs=2, batch_size=32):
 	
 	train_samples=len(os.listdir(tmp_train_data_path+"/label_0/"))+len(os.listdir(tmp_train_data_path+"/label_1/"))
 	val_samples=len(os.listdir(val_data_path+"/label_0/"))+len(os.listdir(val_data_path+"/label_1/"))
@@ -312,13 +313,13 @@ def E_step(train_data_path, probab_path, discard_patches_dir, img_wise_indices, 
 			discriminative_mask = reconstructed_probab_map >= threshold
 
 			# Saving visualisable probab and discriminative maps
-			img_recons_path = img_recons_path = os.path.join(reconstructed_probab_map_path, "label_"+str(label), img_name)
+			img_recons_path = os.path.join(reconstructed_probab_map_path, "label_"+str(label), img_name)
 			if not os.path.exists(img_recons_path):
 				os.mkdir(img_recons_path)
-			img_recons_file = os.path.join(img_recons_path, str(iteration)+"_reconstructed.jpg")
-			img_discrim_file = os.path.join(img_recons_path, str(iteration)+"_discriminative.jpg")
-			cv2.imwrite(img_recons_path, np.uint8(255*reconstructed_probab_map))
-			cv2.imwrite(img_discrim_path, np.uint8(255*reconstructed_probab_map[discriminative_mask]))
+			img_recons_file = os.path.join(img_recons_path, str(iteration)+"_reconstructed.png")
+			img_discrim_file = os.path.join(img_recons_path, str(iteration)+"_discriminative.png")
+			cv2.imwrite(img_recons_file, np.uint8(255*reconstructed_probab_map))
+			cv2.imwrite(img_discrim_file, np.uint8(255*(1*discriminative_mask)))
 
 			# print("discriminative_mask shape:", discriminative_mask.shape, "type:", discriminative_mask.dtype)
 
