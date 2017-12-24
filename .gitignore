@@ -1,3 +1,4 @@
 venv
 tf_tut/mnist
-tf_tut/tmp
+cars_class/test_images
+cars_class/train_images
