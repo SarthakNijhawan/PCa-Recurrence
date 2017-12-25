@@ -27,7 +27,6 @@ val_data_path = data_path + '/valid'
 tmp_probab_path = './cars_class/probab_maps_dump_tmp'
 discarded_patches = './cars_class/discarded_patches'
 reconstructed_probab_map_path = './cars_class/reconstructeed_maps'
-images_path = './images/'
 
 n_iter = 10
 batch_size = 128
@@ -208,8 +207,7 @@ def load_indices(train_data_path, n_classes=2):
  			patch_name = patch_list[patch_index].split(".")[0]
  			patch_split = patch_name.split("_")
  			img_name = patch_split[0]
- 			orig_img_path = os.path.join(images_path, img_name+".png")
- 			image=load_patch(orig_img_path)
+ 			img_size = [int(patch_split[4]), int(patch_split[5])]
  			if img_name not in label_img_wise_indices.keys():
  				label_img_wise_indices[img_name] = [patch_index,]
  			else:
@@ -219,7 +217,7 @@ def load_indices(train_data_path, n_classes=2):
  			label_patch_wise_indices[patch_name]["index"]=patch_index
  			label_patch_wise_indices[patch_name]["img_name"]=img_name
  			label_patch_wise_indices[patch_name]["coord"]=[int(patch_split[1]), int(patch_split[2])]
- 			label_patch_wise_indices[patch_name]["img_shape"]=image.shape
+ 			label_patch_wise_indices[patch_name]["img_shape"]=img_size
 	 		
 		img_wise_indices += [label_img_wise_indices,]
 		patch_wise_indices += [label_patch_wise_indices,]
@@ -274,7 +272,7 @@ def E_step(train_data_path, probab_path, discard_patches_dir, img_wise_indices, 
 		for img_name in img_wise_indices[label].keys():
 			img_probab_map = np.load(os.path.join(probab_path, "label_"+str(label), img_name+".npy"))
 			img_lvl_thresh = np.percentile(img_probab_map, img_lvl_pctl)
-			img_shape = patch_wise_indices[patch_list[img_wise_indices[0]].split(".")[0]]["img_shape"]
+			img_shape = patch_wise_indices[label][patch_list[img_wise_indices[label][img_name][0]].split(".")[0]]["img_shape"]
 			reconstructed_probab_map = np.zeros(img_shape)
 			
 			# Iterating over all the patches of the image

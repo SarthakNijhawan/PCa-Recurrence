@@ -24,11 +24,11 @@ def main():
 			image_path = os.path.join(src, line_split[1])
 			img_name = line_split[1].split(".")[0]
 			label = int(line_split[0])-1
-			patches, coord_list = make_patches(image_path)
+			patches, coord_list, img_size = make_patches(image_path)
 
 			for i in range(patches.shape[0]):
 				x_coord, y_coord = coord_list[i]
-				patch_dest_path = os.path.join(type_dest, "label_"+str(label), img_name+"_"+str(x_coord)+"_"+str(y_coord)+"_"+str(label)+".png")
+				patch_dest_path = os.path.join(type_dest, "label_"+str(label), img_name+"_"+str(x_coord)+"_"+str(y_coord)+"_"+str(label)+"_"+str(img_size[0])+"_"+str(img_size[1])+".png")
 				cv2.imwrite(patch_dest_path, patches[i])
 			print("Processing done for :", img_name)
 
@@ -41,7 +41,7 @@ def make_patches(image_path, patch_size=51, strides=23):
 	patches = np.zeros((1, 51, 51, 3))
 	patches = np.delete(patches, [0], axis=0)
 	coord_list = []
-
+	
 	for x_coord in range(patch_size/2, img_size[0]-patch_size/2, strides):
 		for y_coord in range(patch_size/2, img_size[1]-patch_size/2, strides):
 			patch = image[x_coord-patch_size/2:x_coord+patch_size/2+1, y_coord-patch_size/2:y_coord+patch_size/2+1]
@@ -50,7 +50,7 @@ def make_patches(image_path, patch_size=51, strides=23):
 			patches = np.concatenate((patches, np.expand_dims(patch, axis=0)))
 			coord_list += [[x_coord, y_coord],]
 
-	return patches, coord_list
+	return patches, coord_list, img_size
 
 def load_image(img_path):
 	return cv2.imread(img_path)
