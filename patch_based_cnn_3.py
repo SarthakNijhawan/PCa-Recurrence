@@ -303,9 +303,12 @@ def E_step(train_data_path, probab_path, discard_patches_dir, img_wise_indices, 
 			img_recons_path = os.path.join(reconstructed_probab_map_path, "label_"+str(label), img_name)
 			if not os.path.exists(img_recons_path):
 				os.mkdir(img_recons_path)
-			img_recons_file = os.path.join(img_recons_path, str(iteration)+"_reconstructed.png")
+			img_gauss_file = os.path.join(img_recons_path, str(iteration)+"_gauss.png")
 			img_discrim_file = os.path.join(img_recons_path, str(iteration)+"_discriminative.png")
-			cv2.imwrite(img_recons_file, gauss_map)
+			img_recons_file = os.path.join(img_recons_path, str(iteration)+"_reconstructed.png")
+
+			cv2.imwrite(img_gauss_file, gauss_map)
+			cv2.imwrite(img_recons_file, np.unit8(reconstructed_probab_map*255))
 			cv2.imwrite(img_discrim_file, np.uint8(255*(1*discriminative_mask)))
 			
 			for index in range(img_probab_map.shape[0]):
@@ -322,7 +325,7 @@ def E_step(train_data_path, probab_path, discard_patches_dir, img_wise_indices, 
 def load_patch(img_path):
 	return cv2.imread(img_path)
 
-def GaussianKernel(ksize=101, nsig=20):
+def GaussianKernel(ksize=101, nsig=25):
 	gauss1D = cv2.getGaussianKernel(ksize, nsig)
 	gauss2D = gauss1D*np.transpose(gauss1D)
 	gauss2D = gauss2D/gauss2D[int(ksize/2), int(ksize/2)]
