@@ -30,7 +30,7 @@ discarded_patches = './expt_4/discarded_patches'
 reconstructed_probab_map_path = './expt_4/reconstructed_maps'
 
 # Model hyper-paramenters
-n_iter = 10
+n_iter = 9
 batch_size = 256
 n_classes = 2
 data_augmentation = True
@@ -99,8 +99,7 @@ def main():
 		# raw_input('::::::::::::::::::: HALT ::::::::::::::::::::')
 
 		######### M-Step #########
-		train_and_validate(model, train_data_gen, valid_data_gen, tmp_train_data_path, val_data_path,\
-						batch_size=batch_size)
+		train_and_validate(model, train_data_gen, valid_data_gen, tmp_train_data_path, val_data_path)
 
 		print("{} iteration ::::::::::: M-step performed!!".format(itr+2))
 
@@ -297,7 +296,7 @@ def E_step(train_data_path, probab_path, discard_patches_dir, img_wise_indices, 
 				probability = img_probab_map[index]
 				orig_patch_probab = reconstructed_probab_map[patch_cent_coord[0]-img_rows/2: patch_cent_coord[0]+img_rows/2+1, \
 										patch_cent_coord[1]-img_cols/2:patch_cent_coord[1]+img_cols/2+1]
-				new_patch_prob = probability*GaussianKernel(img_rows, 20)
+				new_patch_prob = probability*GaussianKernel(img_rows, 50)
 				# new_patch_prob = probability*UniformKernel()
 				reconstructed_probab_map[patch_cent_coord[0]-img_rows/2: patch_cent_coord[0]+img_rows/2+1, \
 										patch_cent_coord[1]-img_cols/2:patch_cent_coord[1]+img_cols/2+1] = \
@@ -319,7 +318,7 @@ def E_step(train_data_path, probab_path, discard_patches_dir, img_wise_indices, 
 			img_recons_file = os.path.join(img_recons_path, str(iteration)+"_reconstructed.png")
 
 			cv2.imwrite(img_gauss_file, gauss_map)
-			cv2.imwrite(img_recons_file, np.unit8(reconstructed_probab_map*255))
+			cv2.imwrite(img_recons_file, np.uint8(reconstructed_probab_map*255))
 			cv2.imwrite(img_discrim_file, np.uint8(255*(1*discriminative_mask)))
 			
 			for index in range(img_probab_map.shape[0]):

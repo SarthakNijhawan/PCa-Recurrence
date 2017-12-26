@@ -1,6 +1,6 @@
 # from __future__ import print_function
 import os
-os.environ["CUDA_VISIBLE_DEVICES"]="1"
+os.environ["CUDA_VISIBLE_DEVICES"]="0"
 
 import numpy as np
 import scipy.stats as st
@@ -42,7 +42,7 @@ img_rows, img_cols = 101,101
 img_channels = 3
 
 """ Features of this exp
-		- Img_lvl_decision_fusion model
+		- Img_lvl_decision_fusion model (Voting)
 		- Same arch as that of paper
 		- Additional Gaussian Smoothing
 		- batch = 256
@@ -154,7 +154,7 @@ def patch_based_cnn_model(dropout_prob=0.5, l_rate=0.1):
 	return model
 
 def data_generator(train_data_path, val_data_path):
-	datagen = ImageDataGenerator(rescale=1.0/255.)
+	# datagen = ImageDataGenerator(rescale=1.0/255.)
 	datagen_augmented = ImageDataGenerator(	featurewise_center=False,
 	    samplewise_center=True,
 	    featurewise_std_normalization=False,
@@ -175,28 +175,54 @@ def data_generator(train_data_path, val_data_path):
 		preprocessing_function=None)
 	return [datagen_augmented, datagen]
 
-def train_and_validate(model, train_data_gen, valid_data_gen, train_data_path, val_data_path, n_epochs=2):
+def train_and_validate(model, train_data_gen, train_data_path, val_data_path, n_epochs=2):
 	train_samples=len(os.listdir(tmp_train_data_path+"/label_0/"))+len(os.listdir(tmp_train_data_path+"/label_1/"))
-	val_samples=len(os.listdir(val_data_path+"/label_0/"))+len(os.listdir(val_data_path+"/label_1/"))
+	# val_samples=len(os.listdir(val_data_path+"/label_0/"))+len(os.listdir(val_data_path+"/label_1/"))
 	
 	train_generator_augmented = train_data_gen.flow_from_directory(
 	    train_data_path,
 	    target_size=(img_cols, img_rows),
 	    batch_size=batch_size,
 	    class_mode='categorical')
-	validation_generator = valid_data_gen.flow_from_directory(
-	    val_data_path,
-	    target_size=(img_cols, img_rows),
-	    batch_size=batch_size,
-	    class_mode='categorical')
+	# validation_generator = valid_data_gen.flow_from_directory(
+	#     val_data_path,
+	#     target_size=(img_cols, img_rows),
+	#     batch_size=batch_size,
+	#     class_mode='categorical')
 
 	model.fit_generator(
 		    train_generator_augmented,
 		    steps_per_epoch=train_samples // batch_size,
 		    epochs=n_epochs,
 		    verbose=1,
-		    validation_data=validation_generator,
-			validation_steps=val_samples // batch_size)
+		    # validation_data=validation_generator,
+			# validation_steps=val_samples // batch_size
+			)
+
+	# 2nd Level Fusion model (Validation Part)
+	val_thresh = 0.6
+	predictions = []
+
+	for label in range(2):
+		val_imgs_path = os.path.join(val_data_path, "label_"+str(label))
+		img_wise_patches_list = os.listdir(val_imgs_path)
+		for img_wise_patches in img_wise_patches_list:
+			patches_path = os.path.join(val_imgs_path, img_wise_patches)
+			patches = np.load(patches_path)
+			patches_pred = model.predict(patches)
+			patches_labels = np.argmax(patches_pred, axis=1)
+
+			discr_map = np.logical_xor(patches_pred>val_thresh, patches_pred<(1-val_thresh))
+			discr_map = np.logical_and(discr_map[:,0], discr_map[:,1])
+
+			patches_labels = patches_labels[discri_map]
+			img_lvl_pred = 1*(len(patches_labels[patches_labels==label]) > len(patches_labels[patches_labels==(1-label)]))
+
+			predictions += [img_lvl_pred,]
+
+	predictions = np.array(predictions)
+	accuracy = np.mean(predictions)
+	print("Accuracy of the model:", accuracy)
 
 ##################################################################
 #--------------------- EM Algo Helper functions -------------------#
@@ -308,7 +334,7 @@ def E_step(train_data_path, probab_path, discard_patches_dir, img_wise_indices, 
 			img_recons_file = os.path.join(img_recons_path, str(iteration)+"_reconstructed.png")
 
 			cv2.imwrite(img_gauss_file, gauss_map)
-			cv2.imwrite(img_recons_file, np.unit8(reconstructed_probab_map*255))
+			cv2.imwrite(img_recons_file, np.uint8(reconstructed_probab_map*255))
 			cv2.imwrite(img_discrim_file, np.uint8(255*(1*discriminative_mask)))
 			
 			for index in range(img_probab_map.shape[0]):
