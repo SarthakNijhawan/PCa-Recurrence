@@ -1,7 +1,6 @@
 # from __future__ import print_function
 import os
-os.environ["CUDA_VISIBLE_DEVICES"]="0"
-
+os.environ["CUDA_VISIBLE_DEVICES"]="1"
 import numpy as np
 import scipy.stats as st
 import tensorflow as tf
@@ -18,7 +17,9 @@ from keras.layers import Dense, Dropout, Conv2D, MaxPooling2D, Activation, Input
 from keras.models import Model
 from keras.optimizers import Adam,SGD, RMSprop
 from keras import backend as K
+from keras.callbacks import ModelCheckpoint, LearningRateScheduler, CSVLogger
 
+# gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.6)
 
 # --------------------- Global Variables -------------------------
 model_path = './expt_3/saved_models'
@@ -29,17 +30,21 @@ tmp_probab_path = './expt_3/probab_maps_dump_tmp'
 discarded_patches = './expt_3/discarded_patches'
 reconstructed_probab_map_path = './expt_3/reconstructed_maps'
 
+model_weight_path = './expt_3/expt_3_cnn_weights.h5'
+
 # Model hyper-paramenters
-n_iter = 10
-batch_size = 256
-n_classes = 2
-data_augmentation = True
+n_iter=10
+batch_size=32
+n_classes=2
+data_augmentation=True
 img_lvl_pctl=5
-class_lvl_pctl=7
+class_lvl_pctl=10
+dropout_prob=0.0
+l_rate=0.0001
 
 # input image dimensions
-img_rows, img_cols = 101,101
-img_channels = 3
+img_rows, img_cols=101,101
+img_channels=3
 
 """ Features of this exp
 		- Img_lvl_decision_fusion model (Voting)
@@ -55,15 +60,16 @@ img_channels = 3
 
 # --------------------- Main Function ----------------------------
 def main():
+	# sess=tf.Session(config=tf.ConfigProto(gpu_options=gpu_options))
 	sess=tf.Session()
 	K.set_session(sess)
 	
 	# Maintains a tmp directory for training, due to regular updations made on the directory
-	if os.path.exists(tmp_train_data_path):
-		shutil.rmtree(tmp_train_data_path)
+	# if os.path.exists(tmp_train_data_path):
+	# 	shutil.rmtree(tmp_train_data_path)
 
-	print("Making a tmp storage for train data.........")
-	shutil.copytree(os.path.join(data_path, "train"), tmp_train_data_path)
+	# print("Making a tmp storage for train data.........")
+	# shutil.copytree(os.path.join(data_path, "train"), tmp_train_data_path)
 	
 	# discarded patches dir
 	make_dir(discarded_patches, False)
@@ -71,13 +77,13 @@ def main():
 
 	# Defining a model
 	model = patch_based_cnn_model()
-
+	print model.summary()
 	# This will do preprocessing and realtime data augmentation:
-	train_data_gen, valid_data_gen = data_generator(tmp_train_data_path, val_data_path)
+	train_data_gen, data_gen = data_generator()
 
 	#################### Initial M-step ######################## 
 	# Training and predictions of probability maps
-	train_and_validate(model, train_data_gen, valid_data_gen, tmp_train_data_path, val_data_path)
+	train_and_validate(model, train_data_gen, data_gen, tmp_train_data_path, val_data_path)
 	print("First iteration of EM algo over")
 
 	#################### 2nd Iteration Onwards ########################
@@ -90,22 +96,15 @@ def main():
 		print("Length of patch wise indices for label_1:", len(patch_wise_indices[1]))
 
 		######### E-step #########
-		generate_predicted_maps(model, tmp_train_data_path, tmp_probab_path, img_wise_indices)
+		generate_predicted_maps(model, data_gen, tmp_train_data_path, tmp_probab_path, img_wise_indices)
 		print("................... Probability maps predicted .............")
 		E_step(tmp_train_data_path, tmp_probab_path, discarded_patches, img_wise_indices, patch_wise_indices, reconstructed_probab_map_path, itr+2)
 		shutil.rmtree(tmp_probab_path)
 		print("{} iteration ::::::::::: E-step performed!!".format(itr+2))
 		
 		######### M-Step #########
-		train_and_validate(model, train_data_gen, valid_data_gen, tmp_train_data_path, val_data_path,\
-						batch_size=batch_size)
-
+		train_and_validate(model, train_data_gen, data_gen, tmp_train_data_path, val_data_path)
 		print("{} iteration ::::::::::: M-step performed!!".format(itr+2))
-
-
-	# saving the model
-	saver = tf.train.Saver()
-	saver.save(sess, model_path)
 
 	# EM-Algo completed
 	sess.close()
@@ -115,7 +114,7 @@ def main():
 ##################################################################
 #---------------------Model and its functions -------------------#
 ##################################################################
-def patch_based_cnn_model(dropout_prob=0.5, l_rate=0.1):
+def patch_based_cnn_model():
 
 	# Layers
 	input_img=Input(shape=(img_rows,img_cols,3))
@@ -146,19 +145,19 @@ def patch_based_cnn_model(dropout_prob=0.5, l_rate=0.1):
 
 	model=Model(input=[input_img],output=[preds])
 
-	sgd = SGD(lr=0.001, momentum=0.0, decay=0.0, nesterov=True)
+	sgd = SGD(lr=l_rate, momentum=0.0, decay=0.0, nesterov=True)
 	model.compile(loss='categorical_crossentropy',
 	              optimizer=sgd,
 	              metrics=['accuracy'])
 
 	return model
 
-def data_generator(train_data_path, val_data_path):
-	# datagen = ImageDataGenerator(rescale=1.0/255.)
+def data_generator():
+	datagen = ImageDataGenerator(rescale=1.0/255.)
 	datagen_augmented = ImageDataGenerator(	featurewise_center=False,
-	    samplewise_center=True,
+	    samplewise_center=False,
 	    featurewise_std_normalization=False,
-	    samplewise_std_normalization=True,
+	    samplewise_std_normalization=False,
 	    zca_whitening=False,
 	    zca_epsilon=1e-6,
 	    rotation_range=90,
@@ -173,51 +172,76 @@ def data_generator(train_data_path, val_data_path):
 	    vertical_flip=True,
 	    rescale=1.0/255.,
 		preprocessing_function=None)
-	return [datagen_augmented, datagen]
+	return datagen_augmented, datagen
 
-def train_and_validate(model, train_data_gen, train_data_path, val_data_path, n_epochs=2):
-	train_samples=len(os.listdir(tmp_train_data_path+"/label_0/"))+len(os.listdir(tmp_train_data_path+"/label_1/"))
-	# val_samples=len(os.listdir(val_data_path+"/label_0/"))+len(os.listdir(val_data_path+"/label_1/"))
+def train_and_validate(model, train_data_gen, valid_data_gen, train_data_path, val_data_path, n_epochs=2):
+	train_samples_0 = len(os.listdir(tmp_train_data_path+"/label_0/"))
+	train_samples_1 = len(os.listdir(tmp_train_data_path+"/label_1/"))  
+	train_samples = train_samples_0 + train_samples_1
+	
+	val_orig_data_path = os.path.join(data_path, 'valid_orig')
+	val_samples=len(os.listdir(val_orig_data_path+"/label_0/"))+len(os.listdir(val_orig_data_path+"/label_1/"))
 	
 	train_generator_augmented = train_data_gen.flow_from_directory(
 	    train_data_path,
 	    target_size=(img_cols, img_rows),
 	    batch_size=batch_size,
 	    class_mode='categorical')
-	# validation_generator = valid_data_gen.flow_from_directory(
-	#     val_data_path,
-	#     target_size=(img_cols, img_rows),
-	#     batch_size=batch_size,
-	#     class_mode='categorical')
 
+	validation_generator = valid_data_gen.flow_from_directory(
+	    val_orig_data_path,
+	    target_size=(img_cols, img_rows),
+	    batch_size=batch_size,
+	    class_mode='categorical')
+
+	checkpointer = ModelCheckpoint(filepath=model_weight_path, monitor='val_acc',verbose=1, save_best_only=True)
+	csv_logger = CSVLogger('expt_3/expt_3_cnn.csv')
+	class_weight = {0 : 1.0*train_samples_1/train_samples_0 if train_samples_0 < train_samples_1 else 1.0,
+				    1 : 1.0*train_samples_0/train_samples_1 if train_samples_1 < train_samples_0 else 1.0}
 	model.fit_generator(
 		    train_generator_augmented,
 		    steps_per_epoch=train_samples // batch_size,
 		    epochs=n_epochs,
 		    verbose=1,
-		    # validation_data=validation_generator,
-			# validation_steps=val_samples // batch_size
-			)
+		    validation_data=validation_generator,
+			validation_steps=val_samples // batch_size,
+			callbacks=[checkpointer, csv_logger],
+			class_weight=class_weight)
 
 	# 2nd Level Fusion model (Validation Part)
 	val_thresh = 0.6
 	predictions = []
 
-	for label in range(2):
-		val_imgs_path = os.path.join(val_data_path, "label_"+str(label))
-		img_wise_patches_list = os.listdir(val_imgs_path)
+	for label in range(n_classes):
+		val_patches_path = os.path.join(val_data_path, "label_"+str(label))
+		img_wise_patches_list = os.listdir(val_patches_path)
+		
 		for img_wise_patches in img_wise_patches_list:
-			patches_path = os.path.join(val_imgs_path, img_wise_patches)
+			patches_path = os.path.join(val_patches_path, img_wise_patches)
 			patches = np.load(patches_path)
-			patches_pred = model.predict(patches)
+
+			model.load_weights(model_weight_path)
+			valid_samples = patches.shape[0]
+			val_generator = valid_data_gen.flow(
+		        patches,
+		        shuffle = False,
+		        batch_size = batch_size)
+			patches_pred = model.predict_generator(val_generator, steps=valid_samples // batch_size)
+
+			# patches_pred = model.predict(patches)
 			patches_labels = np.argmax(patches_pred, axis=1)
 
 			discr_map = np.logical_xor(patches_pred>val_thresh, patches_pred<(1-val_thresh))
 			discr_map = np.logical_and(discr_map[:,0], discr_map[:,1])
 
-			patches_labels = patches_labels[discri_map]
-			img_lvl_pred = 1*(len(patches_labels[patches_labels==label]) > len(patches_labels[patches_labels==(1-label)]))
-
+			patches_labels = patches_labels[discr_map]
+			same_label_patches = len(patches_labels[patches_labels==label])
+			diff_label_patches = len(patches_labels[patches_labels==(1-label)])
+			img_lvl_pred = 1*(same_label_patches > diff_label_patches)
+			print(img_wise_patches.split(".")[0], ":", img_lvl_pred, \
+				"with output Shape :", patches_pred.shape, "and patches :",\
+				 valid_samples, "same_label_patches :", same_label_patches, \
+				 "diff_label_patches :", diff_label_patches)
 			predictions += [img_lvl_pred,]
 
 	predictions = np.array(predictions)
@@ -236,7 +260,6 @@ def load_indices(train_data_path):
  		label_patch_wise_indices = {}
 
  		patch_list = os.listdir(train_data_path+"/label_"+str(label))
-
  		for patch_index in range(len(patch_list)):
  			patch_name = patch_list[patch_index].split(".")[0]
  			patch_split = patch_name.split("_")
@@ -257,7 +280,7 @@ def load_indices(train_data_path):
 
 	return img_wise_indices, patch_wise_indices
 
-def generate_predicted_maps(model, train_data_path, probab_path, img_wise_indices):
+def generate_predicted_maps(model, test_datagen, train_data_path, probab_path, img_wise_indices):
 
 	for label in range(n_classes):
 		class_data_path = os.path.join(train_data_path, "label_"+str(label))
@@ -265,7 +288,6 @@ def generate_predicted_maps(model, train_data_path, probab_path, img_wise_indice
 
 		class_probab_map = np.zeros((1,))
 		class_probab_map = np.delete(class_probab_map, [0], axis=0)
-		# print("class_probab_map shape:", class_probab_map.shape)
 
 		# Iterating img_wise over the patches
 		for img_name in img_wise_indices[label].keys():
@@ -278,8 +300,13 @@ def generate_predicted_maps(model, train_data_path, probab_path, img_wise_indice
 				patch = load_patch(patch_path)
 				patches = np.concatenate((patches, np.expand_dims(patch, axis=0)))
 			
-			patches /= 255.0
-			img_probab_map = model.predict(patches)
+			model.load_weights(model_weight_path)
+			test_samples = patches.shape[0]
+			test_generator = test_datagen.flow(
+		        patches,
+		        shuffle = False,
+		        batch_size = batch_size)
+			img_probab_map = model.predict_generator(test_generator, steps=test_samples // batch_size)
 			img_probab_map = img_probab_map[:, label]
 
 			# saves the probab_map for the img
@@ -317,7 +344,9 @@ def E_step(train_data_path, probab_path, discard_patches_dir, img_wise_indices, 
 				# new_patch_prob = probability*UniformKernel()
 				reconstructed_probab_map[patch_cent_coord[0]-img_rows/2: patch_cent_coord[0]+img_rows/2+1, \
 										patch_cent_coord[1]-img_cols/2:patch_cent_coord[1]+img_cols/2+1] = \
-					np.maximum(orig_patch_probab, new_patch_prob)
+										(orig_patch_probab+new_patch_prob)/2.0
+										# np.maximum(orig_patch_probab, new_patch_prob)
+										
 
 			# Gaussian Smoothing on the reconstructed image
 			gauss_map = cv2.GaussianBlur(np.uint8(reconstructed_probab_map*255),(11,11),0)
@@ -351,7 +380,7 @@ def E_step(train_data_path, probab_path, discard_patches_dir, img_wise_indices, 
 def load_patch(img_path):
 	return cv2.imread(img_path)
 
-def GaussianKernel(ksize=101, nsig=25):
+def GaussianKernel(ksize=101, nsig=20):
 	gauss1D = cv2.getGaussianKernel(ksize, nsig)
 	gauss2D = gauss1D*np.transpose(gauss1D)
 	gauss2D = gauss2D/gauss2D[int(ksize/2), int(ksize/2)]

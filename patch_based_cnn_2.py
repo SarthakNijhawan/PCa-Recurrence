@@ -203,8 +203,8 @@ def train_and_validate(model, train_data_gen, valid_data_gen, train_data_path, v
 		    epochs=n_epochs,
 		    verbose=1,
 		    validation_data=validation_generator,
-			validation_steps=val_samples // batch_size)
-			# callbacks=[checkpointer,csv_logger])														#TODO
+			validation_steps=val_samples // batch_size
+			callbacks=[checkpointer,csv_logger])														#TODO
 
 ##################################################################
 #--------------------- EM Algo Helper functions -------------------#

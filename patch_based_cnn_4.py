@@ -18,7 +18,7 @@ from keras.layers import Dense, Dropout, Conv2D, MaxPooling2D, Activation, Input
 from keras.models import Model
 from keras.optimizers import Adam,SGD, RMSprop
 from keras import backend as K
-
+from keras.callbacks import ModelCheckpoint, LearningRateScheduler, CSVLogger
 
 # --------------------- Global Variables -------------------------
 model_path = './expt_4/saved_models'
@@ -29,13 +29,15 @@ tmp_probab_path = './expt_4/probab_maps_dump_tmp'
 discarded_patches = './expt_4/discarded_patches'
 reconstructed_probab_map_path = './expt_4/reconstructed_maps'
 
+model_weight_path = './expt_4/expt_4_cnn_weights.h5'
+
 # Model hyper-paramenters
-n_iter = 9
+n_iter = 10
 batch_size = 256
 n_classes = 2
 data_augmentation = True
 img_lvl_pctl=5
-class_lvl_pctl=7
+class_lvl_pctl=10
 
 # input image dimensions
 img_rows, img_cols = 75, 75
@@ -49,7 +51,7 @@ img_channels = 3
 		- class_lvl_pctl = 7
 		- starting epoch = 2
 		- loss = binary crossentropy
-		- nsig = 20
+		- nsig = 40
 """
 
 # --------------------- Main Function ----------------------------
@@ -58,11 +60,11 @@ def main():
 	K.set_session(sess)
 	
 	# Maintains a tmp directory for training, due to regular updations made on the directory
-	if os.path.exists(tmp_train_data_path):
-		shutil.rmtree(tmp_train_data_path)
+	#if os.path.exists(tmp_train_data_path):
+	#	shutil.rmtree(tmp_train_data_path)
 
-	print("Making a tmp storage for train data.........")
-	shutil.copytree(os.path.join(data_path, "train"), tmp_train_data_path)
+	#print("Making a tmp storage for train data.........")
+	#shutil.copytree(os.path.join(data_path, "train"), tmp_train_data_path)
 	
 	# discarded patches dir
 	make_dir(discarded_patches, False)
@@ -72,11 +74,11 @@ def main():
 	model = patch_based_cnn_model()
 
 	# This will do preprocessing and realtime data augmentation:
-	train_data_gen, valid_data_gen = data_generator(tmp_train_data_path, val_data_path)
+	train_data_gen, data_gen = data_generator()
 
 	#################### Initial M-step ######################## 
 	# Training and predictions of probability maps
-	train_and_validate(model, train_data_gen, valid_data_gen, tmp_train_data_path, val_data_path)
+	train_and_validate(model, train_data_gen, data_gen, tmp_train_data_path, val_data_path)
 	print("First iteration of EM algo over")
 
 	#################### 2nd Iteration Onwards ########################
@@ -89,7 +91,7 @@ def main():
 		print("Length of patch wise indices for label_1:", len(patch_wise_indices[1]))
 
 		######### E-step #########
-		generate_predicted_maps(model, tmp_train_data_path, tmp_probab_path, img_wise_indices)
+		generate_predicted_maps(model, data_gen, tmp_train_data_path, tmp_probab_path, img_wise_indices)
 		print("................... Probability maps predicted .............")
 		# raw_input('::::::::::::::::::: HALT ::::::::::::::::::::')
 
@@ -99,14 +101,14 @@ def main():
 		# raw_input('::::::::::::::::::: HALT ::::::::::::::::::::')
 
 		######### M-Step #########
-		train_and_validate(model, train_data_gen, valid_data_gen, tmp_train_data_path, val_data_path)
+		train_and_validate(model, train_data_gen, data_gen, tmp_train_data_path, val_data_path)
 
 		print("{} iteration ::::::::::: M-step performed!!".format(itr+2))
 
 
 	# saving the model
-	saver = tf.train.Saver()
-	saver.save(sess, model_path)
+	# saver = tf.train.Saver()
+	# saver.save(sess, model_path)
 
 	# EM-Algo completed
 	sess.close()
@@ -116,7 +118,7 @@ def main():
 ##################################################################
 #---------------------Model and its functions -------------------#
 ##################################################################
-def patch_based_cnn_model(dropout_prob=0.5, l_rate=0.1):
+def patch_based_cnn_model(dropout_prob=0.0, l_rate=0.001):
 
 	# Layers
 	input_img=Input(shape=(img_rows,img_cols,3))
@@ -147,20 +149,21 @@ def patch_based_cnn_model(dropout_prob=0.5, l_rate=0.1):
 	preds = Dense(n_classes, activation='softmax')(convnet)
 
 	model=Model(input=[input_img],output=[preds])
-
+	
 	sgd = SGD(lr=0.001, momentum=0.0, decay=0.0, nesterov=True)
 	model.compile(loss='categorical_crossentropy',
 	              optimizer=sgd,
 	              metrics=['accuracy'])
-
+	
 	return model
 
-def data_generator(train_data_path, val_data_path):
+def data_generator():
+	# test_datagen = ImageDataGenerator(rescale=1.0/255.)
 	datagen = ImageDataGenerator(rescale=1.0/255.)
 	datagen_augmented = ImageDataGenerator(	featurewise_center=False,
-	    samplewise_center=True,
+	    samplewise_center=False,
 	    featurewise_std_normalization=False,
-	    samplewise_std_normalization=True,
+	    samplewise_std_normalization=False,
 	    zca_whitening=False,
 	    zca_epsilon=1e-6,
 	    rotation_range=90,
@@ -191,14 +194,19 @@ def train_and_validate(model, train_data_gen, valid_data_gen, train_data_path, v
 	    target_size=(img_cols, img_rows),
 	    batch_size=batch_size,
 	    class_mode='categorical')
-
+	checkpointer = ModelCheckpoint(filepath=model_weight_path, monitor='val_acc',verbose=1, save_best_only=True)
+	csv_logger = CSVLogger('expt_4/expt_4_cnn.csv')
+	class_weight = {0 : 1.0*train_samples_1/train_samples_0 if train_samples_0 < train_samples_1 else 1.0,
+				    1 : 1.0*train_samples_0/train_samples_1 if train_samples_1 < train_samples_0 else 1.0}
 	model.fit_generator(
 		    train_generator_augmented,
 		    steps_per_epoch=train_samples // batch_size,
 		    epochs=n_epochs,
 		    verbose=1,
 		    validation_data=validation_generator,
-			validation_steps=val_samples // batch_size)
+			validation_steps=val_samples // batch_size,
+			callbacks=[checkpointer,csv_logger], 
+			class_weight=class_weight)
 
 ##################################################################
 #--------------------- EM Algo Helper functions -------------------#
@@ -234,7 +242,7 @@ def load_indices(train_data_path):
 
 	return img_wise_indices, patch_wise_indices
 
-def generate_predicted_maps(model, train_data_path, probab_path, img_wise_indices):
+def generate_predicted_maps(model, test_datagen, train_data_path, probab_path, img_wise_indices):
 
 	for label in range(n_classes):
 		class_data_path = os.path.join(train_data_path, "label_"+str(label))
@@ -255,8 +263,17 @@ def generate_predicted_maps(model, train_data_path, probab_path, img_wise_indice
 				patch = load_patch(patch_path)
 				patches = np.concatenate((patches, np.expand_dims(patch, axis=0)))
 			
-			patches /= 255.0
-			img_probab_map = model.predict(patches)
+			#patches /= 255.0
+			model.load_weights(model_weight_path)
+			test_samples = patches.shape[0]
+			test_generator = test_datagen.flow(
+		        patches,
+		        #target_size=(200, 200),
+		        #color_mode="rgb",
+		        shuffle=False,
+		        #class_mode='categorical',
+		        batch_size=batch_size)
+			img_probab_map = model.predict_generator(test_generator, steps=test_samples // batch_size)
 			img_probab_map = img_probab_map[:, label]
 
 			# saves the probab_map for the img
@@ -300,7 +317,8 @@ def E_step(train_data_path, probab_path, discard_patches_dir, img_wise_indices, 
 				# new_patch_prob = probability*UniformKernel()
 				reconstructed_probab_map[patch_cent_coord[0]-img_rows/2: patch_cent_coord[0]+img_rows/2+1, \
 										patch_cent_coord[1]-img_cols/2:patch_cent_coord[1]+img_cols/2+1] = \
-					np.maximum(orig_patch_probab, new_patch_prob)
+										(orig_patch_probab+new_patch_prob)/2.0
+					# np.maximum(orig_patch_probab, new_patch_prob)
 				# raw_input('::::::::::::::::::: HALT ::::::::::::::::::::')
 
 			# Gaussian Smoothing on the reconstructed image
